@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "forkProcessing": "enabled",
+  "prConcurrentLimit": 0,
+  "prHourlyLimit": 0,
+  "packageRules": [
+    {
+      "matchPackageNames": ["Cython"],
+      "rangeStrategy": "bump",
+      "groupName": "Cython"
+    }
+  ]
+}
