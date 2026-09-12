@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from lark import Lark, Tree
+
 import lark_cython
 
 
@@ -48,12 +51,22 @@ def test_lark_meta_propagation():
 
 
 def test_no_placeholders():
-    parser = Lark('!start: "a" ["b"]', parser="lalr", _plugins=lark_cython.plugins, maybe_placeholders=True)
+    parser = Lark(
+        '!start: "a" ["b"]',
+        parser="lalr",
+        _plugins=lark_cython.plugins,
+        maybe_placeholders=True,
+    )
 
     assert len(parser.parse("a").children) == 2
     assert len(parser.parse("ab").children) == 2
 
-    parser = Lark('!start: "a" ["b"]', parser="lalr", _plugins=lark_cython.plugins, maybe_placeholders=False)
+    parser = Lark(
+        '!start: "a" ["b"]',
+        parser="lalr",
+        _plugins=lark_cython.plugins,
+        maybe_placeholders=False,
+    )
 
     assert len(parser.parse("a").children) == 1
     assert len(parser.parse("ab").children) == 2

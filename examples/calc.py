@@ -1,6 +1,4 @@
-"""
-Basic calculator
-================
+"""Run a basic calculator with variables.
 
 A simple example of a REPL calculator
 
@@ -14,14 +12,12 @@ Main differences from Lark's example code:
 
 - Since Tokens don't inherit from str, we have to explicitly use "token.value".
 """
+
+from __future__ import annotations
+
 from lark import Lark, Transformer, v_args
+
 import lark_cython
-
-try:
-    input = raw_input  # For Python2 compatibility
-except NameError:
-    pass
-
 
 calc_grammar = """
     ?start: sum
@@ -50,33 +46,47 @@ calc_grammar = """
 
 @v_args(inline=True)  # Affects the signatures of the methods
 class CalculateTree(Transformer):
-    from operator import add, sub, mul, truediv as div, neg
+    """Evaluate arithmetic expressions and store variable values."""
+
+    from operator import add, mul, neg, sub
+    from operator import truediv as div
 
     def number(self, t: lark_cython.Token) -> float:
+        """Convert a number token to its numeric value."""
         return float(t.value)
 
-    def NAME(self, t: lark_cython.Token) -> str:
+    def NAME(self, t: lark_cython.Token) -> str:  # noqa: N802 - Lark terminal name.
+        """Extract a variable name from its token."""
         return t.value
 
     def __init__(self):
+        """Start with an empty variable environment."""
         self.vars = {}
 
     def assign_var(self, name, value):
+        """Assign and return a variable value."""
         self.vars[name] = value
         return value
 
     def var(self, name):
+        """Look up a previously assigned variable."""
         try:
             return self.vars[name]
-        except KeyError:
-            raise Exception("Variable not found: %s" % name)
+        except KeyError as error:
+            raise NameError(f"Variable not found: {name}") from error
 
 
-calc_parser = Lark(calc_grammar, parser="lalr", transformer=CalculateTree(), _plugins=lark_cython.plugins)
+calc_parser = Lark(
+    calc_grammar,
+    parser="lalr",
+    transformer=CalculateTree(),
+    _plugins=lark_cython.plugins,
+)
 calc = calc_parser.parse
 
 
 def main():
+    """Read and evaluate expressions until end of input."""
     while True:
         try:
             s = input("> ")
@@ -85,11 +95,5 @@ def main():
         print(calc(s))
 
 
-def test():
-    print(calc("a = 1+2"))
-    print(calc("1+a*-3"))
-
-
 if __name__ == "__main__":
-    # test()
     main()

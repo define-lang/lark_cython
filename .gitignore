@@ -6,3 +6,12 @@ lark_cython/lark_cython.*.so
 lark_cython/lark_cython.html
 __pycache__
 wheelhouse
+
+.venv*/
+.coverage*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.pyd

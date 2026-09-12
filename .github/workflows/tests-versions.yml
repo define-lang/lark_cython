@@ -15,40 +15,47 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+    - name: Set up uv and Python
+      uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       with:
         python-version: ${{ matrix.python-version }}
-
-    - name: Upgrade pip
-      run: |-
-        python -m pip install --upgrade pip
-        python -m pip install setuptools>=0.8 wheel build
-
     - name: Build sdist
-      shell: bash
-      run: |-
-        python -m build --sdist --outdir wheelhouse
+      run: uv build --sdist --out-dir wheelhouse
+    - name: Test installed sdist outside the checkout
+      run: |
+        cd "$(mktemp -d)"
+        uv run --isolated --no-project \
+          --with "$GITHUB_WORKSPACE"/wheelhouse/*.tar.gz --with pytest \
+          pytest "$GITHUB_WORKSPACE/tests"
 
-    - name: Install sdist
-      run: |-
-        ls -al ./wheelhouse
-        pip install pytest pytest-cov
-        pip install Cython
-        pip install wheelhouse/*.tar.gz -v
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      with:
+        python-version: "3.14"
+    - run: uv sync --locked
+    - run: uv run --locked pre-commit run --all-files
 
-    - name: Test sdist
-      run: |-
-        pwd
-        ls -al
-        # Run in a sandboxed directory
-        WORKSPACE_DNAME="testsrcdir_minimal_${{ matrix.python-version }}_${GITHUB_RUN_ID}_${RUNNER_OS}"
-        mkdir -p $WORKSPACE_DNAME
-        cd $WORKSPACE_DNAME
-        # Get path to installed package
-        MOD_NAME=lark_cython
-        MOD_DPATH=$(python -c "import $MOD_NAME, os; print(os.path.dirname($MOD_NAME.__file__))")
-        echo "MOD_DPATH = $MOD_DPATH"
-        # Run the tests
-        python -m pytest --cov=$MOD_NAME $MOD_DPATH ../tests
-        cd ..
+  coverage:
+    name: Cython line coverage
+    runs-on: ubuntu-latest
+    env:
+      LARK_CYTHON_COVERAGE: "1"
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      with:
+        # Cython's coverage plugin is reliably supported on Python 3.11.
+        python-version: "3.11"
+    - run: uv sync --locked
+    - run: uv run --locked pytest --cov --cov-report=term-missing --cov-report=xml --cov-report=html
+    - run: uv run --locked coverage report --include='*.pyx' --fail-under=1
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: cython-coverage
+        path: |
+          coverage.xml
+          htmlcov/
