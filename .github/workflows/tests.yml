@@ -9,7 +9,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     - name: Set up Python 3.10
-      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # v4.7.1
+      uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4.9.1
       with:
         python-version: "3.10"
     - name: Upgrade pip
@@ -84,7 +84,7 @@ jobs:
       shell: bash
       run: ls -la wheelhouse
     - name: Set up Python 3.10 to combine coverage Linux
-      uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # v4.7.1
+      uses: actions/setup-python@7f4fc3e22c37d6ff65e88745f38bd3157c663f7c # v4.9.1
       if: runner.os == 'Linux'
       with:
         python-version: "3.10"
