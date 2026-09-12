@@ -78,8 +78,15 @@ UV_PROJECT_ENVIRONMENT=.venv-coverage LARK_CYTHON_COVERAGE=1 \
 
 Open `htmlcov/index.html` for line-by-line results. CI uploads HTML and XML
 reports as the `cython-coverage` artifact and verifies that `.pyx` coverage was
-actually recorded. The initial seven-test suite covers 44% of the extension's
-executable lines; this is line coverage, not branch coverage.
+actually recorded, with a minimum of 98% Cython line coverage. The scenario and
+standard-Lark comparison suites cover parsing, diagnostics, interactive parsing,
+recovery, serialization, tokens, native trees, and both example CLIs without
+mocks. Examples and Python package code have 100% line coverage.
+
+Cython currently reports ten recovery-path lines as missing even though the
+recovery tests exercise them (including repeated errors and EOF loop prevention).
+These lines remain in the report; no coverage exclusions hide them. This is line
+coverage, not branch coverage, and does not prove every input behaves identically.
 
 Instrumentation affects performance. Rebuild without `LARK_CYTHON_COVERAGE`
 before benchmarking. The uv cache keys track Cython source changes and the
@@ -89,11 +96,9 @@ coverage flag so normal development commands rebuild when either changes:
 uv sync --locked --reinstall-package lark-cython
 ```
 
-Before integrating with Define, add regression tests and fixes for standalone
-parser class compatibility, `UnexpectedToken.accepts`, and free-threaded Python.
-The current extension enables the GIL on free-threaded Python. Existing tests
-cover basic parsing and the examples, but substantial error-handling,
-interactive-parser, serialization, and tree-building paths remain uncovered.
+Before integrating with Define, investigate standalone parser class compatibility
+and free-threaded Python. The current extension enables the GIL on free-threaded
+Python. Interactive `accepts()` and error recovery have regression coverage.
 
 ## Other
 

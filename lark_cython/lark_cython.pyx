@@ -3,7 +3,9 @@ from collections import OrderedDict
 from lark.visitors import _vargs_meta, _vargs_meta_inline
 from lark.visitors import Transformer_InPlace
 from functools import partial, wraps
-from lark.parsers.lalr_interactive_parser import InteractiveParser
+from lark.parsers.lalr_interactive_parser import (
+    InteractiveParser as LarkInteractiveParser,
+)
 from lark.parsers.lalr_analysis import LALR_Analyzer, Shift, IntParseTable
 from lark.utils import Serialize
 import cython
@@ -16,6 +18,7 @@ from lark.exceptions import (
     UnexpectedInput, UnexpectedToken,
 )
 from lark.lexer import CallChain, _create_unless, TerminalDef, _regexp_has_newline
+from lark.lexer import Token as LarkToken
 
 
 ctypedef fused Token_or_str:
@@ -64,7 +67,8 @@ cdef class Token:
     def __reduce__(self):
         return (
             self.__class__,
-            (self.type, self.value, self.start_pos, self.line, self.column),
+            (self.type, self.value, self.start_pos, self.line, self.column,
+             self.end_line, self.end_column, self.end_pos),
         )
 
     def __repr__(self):
@@ -73,8 +77,8 @@ cdef class Token:
     def __str__(self):
         return self.value
 
-    cdef __deepcopy__(self, memo):
-        return Token(self.type, self.value, self.start_pos, self.line, self.column)
+    def __deepcopy__(self, memo):
+        return type(self).new_borrow_pos(self.type, self.value, self)
 
     def __eq__(self, other):
         if isinstance(other, Token):
@@ -113,7 +117,7 @@ cdef class LexerState:
             and self.last_token == other.last_token
         )
 
-    cdef __copy__(self):
+    def __copy__(self):
         return type(self)(self.text, copy(self.line_ctr), self.last_token)
 
     _Token = Token
@@ -143,7 +147,15 @@ cdef class LineCounter:
             and self.newline_char == other.newline_char
         )
 
-    cpdef public feed(self, str token, bint test_newline):
+    def __copy__(self):
+        result = type(self)(self.newline_char)
+        result.char_pos = self.char_pos
+        result.line = self.line
+        result.column = self.column
+        result.line_start_pos = self.line_start_pos
+        return result
+
+    cpdef feed(self, str token, bint test_newline=True):
         """Consume a token and calculate the new line & column.
 
         Set test_newline=False if token does not contain a newline.
@@ -182,9 +194,6 @@ cdef class Scanner:
         self._mres = self._build_mres(terminals, len(terminals))
 
     def _build_mres(self, terminals, max_size):
-        # Python sets an unreasonable group limit (currently 100) in its re module
-        # Worse, the only way to know we reached it is by catching an AssertionError!
-        # This function recursively tries less and less groups until it's successful.
         postfix = "$" if self.match_whole else ""
         mres = []
         while terminals:
@@ -192,16 +201,13 @@ cdef class Scanner:
                 t.name, t.pattern.to_regexp() + postfix) for t in terminals[:max_size])
             if self.use_bytes:
                 pattern = pattern.encode("latin-1")
-            try:
-                mre = self.re_.compile(pattern, self.g_regex_flags)
-            except AssertionError:  # Yes, this is what Python provides us.. :/
-                return self._build_mres(terminals, max_size // 2)
+            mre = self.re_.compile(pattern, self.g_regex_flags)
 
             mres.append((mre, {i: n for n, i in mre.groupindex.items()}))
             terminals = terminals[max_size:]
         return mres
 
-    cpdef public match(self, text: str, pos: int):
+    cpdef public match(self, text, pos: int):
         for mre, type_from_index in self._mres:
             m = mre.match(text, pos)
             if m:
@@ -286,7 +292,8 @@ cdef class BasicLexer(Lexer):
             if type_ in self.callback:
                 # Already a callback there, probably UnlessCallback
                 self.callback[type_] = CallChain(
-                    self.callback[type_], f, lambda t: t.type == type_)
+                    self.callback[type_], f,
+                    lambda t, expected=type_: t.type == expected)
             else:
                 self.callback[type_] = f
 
@@ -301,10 +308,12 @@ cdef class BasicLexer(Lexer):
     cdef match(self, text, pos):
         return self.scanner.match(text, pos)
 
-    # def lex(self, state: LexerState, parser_state: Any):
-    #    with suppress(EOFError):
-    #        while True:
-    #            yield self.next_token(state, parser_state)
+    def lex(self, state, parser_state):
+        try:
+            while True:
+                yield self.next_token(state, parser_state)
+        except EOFError:
+            return
 
     cpdef public next_token(self, LexerState lex_state, ParserState parser_state):
         cdef LineCounter line_ctr = lex_state.line_ctr
@@ -338,10 +347,12 @@ cdef class BasicLexer(Lexer):
                 t.end_column = line_ctr.column
                 t.end_pos = line_ctr.char_pos
                 if t.type in self.callback:
-                    t = self.callback[t.type](t)
-                    if not isinstance(t, Token):
+                    callback_result = self.callback[t.type](t)
+                    if not isinstance(callback_result, Token):
                         raise LexError(
-                            "Callbacks must return a token (returned %r)" % t)
+                            "Callbacks must return a token (returned %r)"
+                            % callback_result)
+                    t = callback_result
                 lex_state.last_token = t
                 return t
             else:
@@ -458,7 +469,8 @@ cdef class ParseConf:
 
     cdef public parse_table
     cdef public int start_state, end_state
-    cdef dict states, callbacks
+    cdef dict states
+    cdef public dict callbacks
     cdef str start
 
     def __init__(self, parse_table, callbacks, start):
@@ -499,17 +511,30 @@ cdef class ParserState:
         )
 
     def __copy__(self):
+        return self.copy()
+
+    def copy(self, deepcopy_values=True):
         return type(self)(
             self.parse_conf,
-            self.lexer,  # XXX copy
+            self.lexer,
             copy(self.state_stack),
-            deepcopy(self.value_stack),
+            deepcopy(self.value_stack) if deepcopy_values else copy(self.value_stack),
         )
 
-    def copy(self):
-        return copy(self)
+    cpdef feed_token(self, token, bint is_end=False):
+        if isinstance(token, LarkToken):
+            token = Token(
+                token.type, token.value,
+                token.start_pos if token.start_pos is not None else -1,
+                token.line if token.line is not None else -1,
+                token.column if token.column is not None else -1,
+                token.end_line, token.end_column, token.end_pos,
+            )
+        elif not isinstance(token, Token):
+            raise TypeError("feed_token expects a Lark or lark-cython Token")
+        return self._feed_token(token, is_end)
 
-    cpdef feed_token(self, Token token, bint is_end=False):
+    cdef _feed_token(self, Token token, bint is_end):
         cdef:
             list state_stack = self.state_stack
             list value_stack = self.value_stack
@@ -557,7 +582,7 @@ cdef class ParserState:
                 else:
                     s = []
 
-                value = callbacks[rule](s)
+                value = callbacks[rule](s) if callbacks else s
 
                 _action, new_state = states[state_stack[-1]][rule.origin.name]
                 assert _action is Shift
@@ -566,6 +591,15 @@ cdef class ParserState:
 
                 if is_end and state_stack[-1] == end_state:
                     return value_stack[-1]
+
+
+class InteractiveParser(LarkInteractiveParser):
+    def copy(self, deepcopy_values=True):
+        state = self.parser_state.copy(deepcopy_values=deepcopy_values)
+        lexer = copy(self.lexer_thread)
+        state.lexer = lexer
+        return type(self)(self.parser, state, lexer)
+
 
 cdef class _Parser:
     cdef parse_table
@@ -598,18 +632,15 @@ cdef class _Parser:
             try:
                 while True:
                     token = state.lexer.next_token(state)
-                    state.feed_token(token)
+                    state._feed_token(token, False)
             except EOFError:
                 pass
 
             end_token = Token.new_borrow_pos(
                 "$END", "", token) if token else Token("$END", "", 0, 1, 1)
-            return state.feed_token(end_token, True)
+            return state._feed_token(end_token, True)
         except UnexpectedInput as e:
-            try:
-                e.interactive_parser = InteractiveParser(self, state, state.lexer)
-            except NameError:
-                pass
+            e.interactive_parser = InteractiveParser(self, state, state.lexer)
             raise e
         except Exception as e:
             if self.debug:
@@ -629,9 +660,10 @@ class LALR_Parser(Serialize):
         analysis.compute_lalr()
         callbacks = parser_conf.callbacks
 
-        self._parse_table = analysis.parse_table
+        self._parse_table = (IntParseTable.from_ParseTable(analysis.parse_table)
+                             if debug else analysis.parse_table)
         self.parser_conf = parser_conf
-        self.parser = _Parser(analysis.parse_table, callbacks, debug)
+        self.parser = _Parser(self._parse_table, callbacks, debug)
 
     @classmethod
     def deserialize(cls, data, memo, callbacks, debug=False):
@@ -653,30 +685,35 @@ class LALR_Parser(Serialize):
             if on_error is None:
                 raise
 
-            while True:
-                if isinstance(e, UnexpectedCharacters):
-                    s = e.interactive_parser.lexer_state.state
-                    p = s.line_ctr.char_pos
+            error = e
 
-                if not on_error(e):
-                    raise e
+        return self._recover(error, on_error)
 
-                if isinstance(e, UnexpectedCharacters):
-                    # If user didn't change the character position, then we should
-                    if p == s.line_ctr.char_pos:
-                        s.line_ctr.feed(s.text[p:p + 1])
+    def _recover(self, e, on_error):
+        while True:
+            if isinstance(e, UnexpectedCharacters):
+                s = e.interactive_parser.lexer_thread.state
+                p = s.line_ctr.char_pos
 
-                try:
-                    return e.interactive_parser.resume_parse()
-                except UnexpectedToken as e2:
-                    if (isinstance(e, UnexpectedToken)
-                        and e.token.type == e2.token.type == "$END"
-                            and e.interactive_parser == e2.interactive_parser):
-                        # Prevent infinite loop
-                        raise e2
-                    e = e2
-                except UnexpectedCharacters as e2:
-                    e = e2
+            if not on_error(e):
+                raise e
+
+            if isinstance(e, UnexpectedCharacters):
+                # If user didn't change the character position, then we should
+                if p == s.line_ctr.char_pos:
+                    s.line_ctr.feed(s.text[p:p + 1])
+
+            try:
+                return e.interactive_parser.resume_parse()
+            except UnexpectedToken as e2:
+                if (isinstance(e, UnexpectedToken)
+                    and e.token.type == e2.token.type == "$END"
+                        and e.interactive_parser == e2.interactive_parser):
+                    # Prevent infinite loop
+                    raise e2
+                e = e2
+            except UnexpectedCharacters as e2:
+                e = e2
 
 # }
 
@@ -684,14 +721,7 @@ class LALR_Parser(Serialize):
 cdef class Meta:
 
     cdef public bint empty
-    cdef public int line
-    cdef public int column
-    cdef public int start_pos
-    cdef public int end_line
-    cdef public int end_column
-    cdef public int end_pos
-    cdef public list orig_expansion
-    cdef public bint match_tree
+    cdef dict __dict__
 
     def __init__(self):
         self.empty = True
@@ -702,11 +732,11 @@ ctypedef fused Child:
     Token
 
 cdef class Tree:
-    cdef public Token data
+    cdef public object data
     cdef public list children  # : 'List[Union[str, Tree]]'
     cdef public Meta _meta
 
-    def __cinit__(self, Token data, list children, meta=None):
+    def __cinit__(self, data, list children, meta=None):
         self.data = data
         self.children = children
         self._meta = meta
@@ -721,7 +751,7 @@ cdef class Tree:
         return "Tree(%r, %r)" % (self.data, self.children)
 
     def _pretty_label(self):
-        return self.data
+        return str(self.data)
 
     def _pretty(self, level, indent_str):
         if len(self.children) == 1 and not isinstance(self.children[0], Tree):
@@ -882,7 +912,8 @@ cdef class PropagatePositions:
         self.node_filter = node_filter
 
     def __call__(self, children):
-        cdef Meta res_meta, first_meta, last_meta
+        cdef Meta res_meta
+        cdef object first_meta, last_meta
 
         res = self.node_builder(children)
 
@@ -910,6 +941,8 @@ cdef class PropagatePositions:
                     first_meta, "container_line", first_meta.line)
                 res_meta.container_column = getattr(
                     first_meta, "container_column", first_meta.column)
+                res_meta.container_start_pos = getattr(
+                    first_meta, "container_start_pos", first_meta.start_pos)
 
             last_meta = self._pp_get_meta(reversed(children))
             if last_meta is not None:
@@ -926,6 +959,8 @@ cdef class PropagatePositions:
                     last_meta, "container_end_line", last_meta.end_line)
                 res_meta.container_end_column = getattr(
                     last_meta, "container_end_column", last_meta.end_column)
+                res_meta.container_end_pos = getattr(
+                    last_meta, "container_end_pos", last_meta.end_pos)
 
         return res
 
@@ -961,7 +996,6 @@ cdef class ChildFilter:
         self.append_none = append_none
 
     def __call__(self, children):
-        assert False
         filtered = []
 
         for i, to_expand, add_none in self.to_include:
@@ -982,7 +1016,6 @@ cdef class ChildFilterLALR(ChildFilter):
     """Filter LALR children in place, assuming no duplication in the parse tree."""
 
     def __call__(self, children):
-        assert False
         cdef int i
         cdef bint to_expand
         cdef int add_none
@@ -1081,7 +1114,7 @@ class ParseTreeBuilder:
         self, rules, tree_class, propagate_positions=False, ambiguous=False,
         maybe_placeholders=False,
     ):
-        self.tree_class = Tree  # tree_class
+        self.tree_class = tree_class
         self.propagate_positions = propagate_positions
         self.ambiguous = ambiguous
         self.maybe_placeholders = maybe_placeholders

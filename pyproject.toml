@@ -107,7 +107,8 @@ convention = "pep257"
 
 [tool.coverage.run]
 plugins = ["Cython.Coverage"]
-source = ["lark_cython"]
+source = ["lark_cython", "examples"]
+patch = ["subprocess"]
 
 [tool.coverage.report]
 show_missing = true
