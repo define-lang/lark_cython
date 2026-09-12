@@ -48,9 +48,8 @@ uv run pre-commit run --all-files
 uv run pytest
 ```
 
-Ruff lints and formats Python files using Define's lint rule selection,
-with this project's first-party imports and Python 3.10 target. Tests use the
-`*_test.py` naming convention so the same test-specific rules apply.
+Ruff lints and formats Python files with a Python 3.10 target. Tests use the
+`*_test.py` naming convention and the test-specific lint rules in `pyproject.toml`.
 
 Ruff and Black cannot parse this project's Cython syntax. For `.pyx` files,
 pre-commit runs autopep8's conservative whitespace fixes, Cython string quote
@@ -96,9 +95,8 @@ coverage flag so normal development commands rebuild when either changes:
 uv sync --locked --reinstall-package lark-cython
 ```
 
-Before integrating with Define, investigate standalone parser class compatibility
-and free-threaded Python. The current extension enables the GIL on free-threaded
-Python. Interactive `accepts()` and error recovery have regression coverage.
+Compatibility with Lark's standalone parser generator remains unverified.
+The current extension enables the GIL on free-threaded Python.
 
 ## Other
 
