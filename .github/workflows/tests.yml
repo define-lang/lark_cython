@@ -71,7 +71,7 @@ jobs:
       with:
         arch: x86
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@7940a4c0e76eb2030e473a5f864f291f63ee879b # v2.21.3
+      uses: pypa/cibuildwheel@e5486e0b831d3a4954f271c2a053fbbc0e227d6a # v2.23.4
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
