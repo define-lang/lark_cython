@@ -14,6 +14,7 @@ Main differences from Lark's example code:
 
 from __future__ import annotations
 
+import json
 import sys
 
 from lark import Lark, Transformer, v_args
@@ -51,7 +52,7 @@ class TreeToJson(Transformer):
     @v_args(inline=True)
     def string(self, s):
         """Extract the value of a quoted string token."""
-        return s.value[1:-1].replace('\\"', '"')
+        return json.loads(s.value)
 
     @v_args(inline=True)
     def number(self, n):
