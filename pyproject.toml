@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 
 [tool.cibuildwheel]
-build = "*p38-* *p39-* *p310-* *p311-* *p312-* *p313-*"
+build = "*p310-* *p311-* *p312-* *p313-* *p314-*"
 build-frontend = "build"
 build-verbosity = 1
 test-requires = [ "pytest" ]
