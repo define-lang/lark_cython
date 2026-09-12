@@ -1,6 +1,52 @@
+[project]
+name = "lark-cython"
+dynamic = ["version"]
+description = "A Lark plugin that optimizes LALR parsing using Cython"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Erez Shinan", email = "lark@erezsh.com"}]
+keywords = ["Lark", "LALR", "parser", "optimized", "Cython"]
+dependencies = ["lark>=1.1.7"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/define-lang/lark_cython"
+Upstream = "https://github.com/lark-parser/lark_cython"
+
+[tool.setuptools.packages.find]
+include = ["lark_cython*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "lark_cython.__version__"}
+
 [build-system]
 requires = ["setuptools", "wheel", "Cython>=3.3.0,<3.4"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "autopep8>=2.3.2",
+    "cython>=3.3.0,<3.4",
+    "cython-lint>=0.21.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.7",
+]
 
 
 [tool.cibuildwheel]
@@ -9,3 +55,78 @@ build-frontend = "build"
 build-verbosity = 1
 test-requires = [ "pytest" ]
 test-command = "pytest {project}"
+
+[tool.ruff.lint]
+extend-select = [
+  "W",  # pycodestyle warnings
+  "I",  # isort
+  "N",  # pep8-naming
+  "D",  # pydocstyle
+  "UP", # pyupgrade
+  "C4",  # flake8-comprehensions
+  "B",   # flake8-bugbear
+  "BLE", # flake8-blind-except
+  "FBT", # flake8-boolean-trap
+  "A",   # flake8-builtins
+  "S",   # flake8-bandit
+  "LOG", # flake8-logging
+  "G",   # flake8-logging-format
+  "TCH", # flake8-type-checking
+  "ICN", # flake8-import-conventions
+  "SIM", # flake8-simplify
+  "PT",  # flake8-pytest-style
+  "YTT", # flake8-2020
+  "PIE", # flake8-pie
+  "RET", # flake8-return
+  "ARG", # flake8-unused-arguments
+  "DTZ", # flake8-datetimez
+  "RUF",  # Ruff-specific rules
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lark_cython"]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**/*.py" = [
+    "S603", # Allow subprocess calls without a shell.
+]
+"**/*_test.py" = [
+    "S101", # Allow assert statements.
+    "D100", # Don't require docstrings on test modules.
+    "D101", # Don't require docstrings on test classes.
+    "D102", # Don't require docstrings on test methods.
+    "D103", # Don't require docstrings on test functions.
+]
+[tool.ruff]
+target-version = "py310"
+force-exclude = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.coverage.run]
+plugins = ["Cython.Coverage"]
+source = ["lark_cython"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.cython-lint]
+max-line-length = 88
+
+[tool.autopep8]
+# Limit autopep8 to whitespace; it does not understand Cython's full grammar.
+select = ["E1", "E2", "E3", "W1", "W2", "W3"]
+max_line_length = 88
+
+[tool.uv]
+cache-keys = [
+    {file = "pyproject.toml"},
+    {file = "setup.py"},
+    {file = "README.md"},
+    {file = "MANIFEST.in"},
+    {file = "lark_cython/__init__.py"},
+    {file = "lark_cython/*.pyx"},
+    {env = "LARK_CYTHON_COVERAGE"},
+]

@@ -1,6 +1,4 @@
-"""
-Simple JSON Parser
-==================
+"""Parse JSON with the Cython-backed Lark parser.
 
 The code is short and clear, and outperforms every other parser (that's written in Python).
 
@@ -13,9 +11,13 @@ Main differences from Lark's example code:
 - Since Tokens don't inherit from str, we have to explicitly use "token.value".
 
 """
+
+from __future__ import annotations
+
 import sys
 
 from lark import Lark, Transformer, v_args
+
 import lark_cython
 
 json_grammar = r"""
@@ -44,21 +46,33 @@ json_grammar = r"""
 
 
 class TreeToJson(Transformer):
+    """Convert JSON grammar nodes into Python values."""
+
     @v_args(inline=True)
     def string(self, s):
+        """Extract the value of a quoted string token."""
         return s.value[1:-1].replace('\\"', '"')
 
     @v_args(inline=True)
     def number(self, n):
+        """Convert a JSON number token to a float."""
         return float(n.value)
 
     array = list
     pair = tuple
     object = dict
 
-    null = lambda self, _: None
-    true = lambda self, _: True
-    false = lambda self, _: False
+    def null(self, _children):
+        """Return the JSON null value."""
+        return
+
+    def true(self, _children):
+        """Return the JSON true value."""
+        return True
+
+    def false(self, _children):
+        """Return the JSON false value."""
+        return False
 
 
 ### Create the JSON parser with Lark-Cython, using the LALR algorithm
@@ -79,26 +93,6 @@ json_parser = Lark(
 parse = json_parser.parse
 
 
-def test():
-    test_json = """
-        {
-            "empty_object" : {},
-            "empty_array"  : [],
-            "booleans"     : { "YES" : true, "NO" : false },
-            "numbers"      : [ 0, 1, -2, 3.3, 4.4e5, 6.6e-7 ],
-            "strings"      : [ "This", [ "And" , "That", "And a \\"b" ] ],
-            "nothing"      : null
-        }
-    """
-
-    j = parse(test_json)
-    print(j)
-    import json
-
-    assert j == json.loads(test_json)
-
-
 if __name__ == "__main__":
-    # test()
     with open(sys.argv[1]) as f:
         print(parse(f.read()))

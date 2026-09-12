@@ -1,61 +1,26 @@
-import re
-from setuptools import find_packages, setup
+"""Build the Cython extension, optionally with coverage instrumentation."""
 
-(__version__,) = re.findall('__version__ = "(.*)"', open("lark_cython/__init__.py").read())
+from __future__ import annotations
 
-# python .\setup.py build_ext --inplace
+import os
 
 from Cython.Build import cythonize
+from setuptools import Extension, setup
 
-
-def parse_description():
-    """
-    Parse the description in the README file
-    """
-    from os.path import dirname, join, exists
-
-    readme_fpath = join(dirname(__file__), "README.md")
-    # This breaks on pip install, so check that it exists.
-    if exists(readme_fpath):
-        with open(readme_fpath, "r") as f:
-            text = f.read()
-        return text
-    return ""
+TRACE = os.environ.get("LARK_CYTHON_COVERAGE") == "1"
 
 
 setup(
-    name="lark-cython",
-    version=__version__,
-    packages=find_packages(),
-    ext_modules=cythonize("lark_cython/*.pyx"),  # accepts a glob pattern
-    requires=["Cython"],
-    install_requires=["lark>=1.1.7"],
-    setup_requires=["Cython>=3.3.0,<3.4"],
-    author="Erez Shinan",
-    author_email="lark@erezsh.com",
-    description="A Lark plugin that optimizes LALR parsing using Cython",
-    keywords="Lark LALR parser optimized Cython",
-    url="https://github.com/lark-parser/lark_cython",
-    long_description=parse_description(),
-    long_description_content_type="text/markdown",
-    license="MIT",
-    python_requires=">=3.10",
-    classifiers=[
-        # List of classifiers available at:
-        # https://pypi.python.org/pypi?%3Aaction=list_classifiers
-        "Development Status :: 4 - Beta",
-        "Intended Audience :: Developers",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "Topic :: Utilities",
-        "Operating System :: Microsoft :: Windows",
-        "Operating System :: MacOS",
-        "Operating System :: POSIX :: Linux",
-        "License :: OSI Approved :: MIT License",
-        # Supported Python versions
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: 3.13",
-        "Programming Language :: Python :: 3.14",
-    ],
+    ext_modules=cythonize(
+        [
+            Extension(
+                "lark_cython.lark_cython",
+                ["lark_cython/lark_cython.pyx"],
+                define_macros=[("CYTHON_TRACE", "1")] if TRACE else [],
+            )
+        ],
+        compiler_directives={"linetrace": TRACE},
+        # Regenerate C when switching between instrumented and normal builds.
+        force=True,
+    ),
 )
