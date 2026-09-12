@@ -1,5 +1,5 @@
-name: Tests
-on: [push, pull_request]
+name: Wheels
+on: workflow_dispatch
 
 jobs:
   build_sdist:
