@@ -30,7 +30,7 @@ setup(
     ext_modules=cythonize("lark_cython/*.pyx"),  # accepts a glob pattern
     requires=["Cython"],
     install_requires=["lark>=1.1.7"],
-    setup_requires=["Cython>=3.0,<3.1"],
+    setup_requires=["Cython>=3.3.0,<3.4"],
     author="Erez Shinan",
     author_email="lark@erezsh.com",
     description="A Lark plugin that optimizes LALR parsing using Cython",
@@ -39,7 +39,7 @@ setup(
     long_description=parse_description(),
     long_description_content_type="text/markdown",
     license="MIT",
-    python_requires=">=3.6",
+    python_requires=">=3.10",
     classifiers=[
         # List of classifiers available at:
         # https://pypi.python.org/pypi?%3Aaction=list_classifiers
@@ -52,10 +52,10 @@ setup(
         "Operating System :: POSIX :: Linux",
         "License :: OSI Approved :: MIT License",
         # Supported Python versions
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
     ],
 )
