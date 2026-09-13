@@ -10,6 +10,7 @@ from lark.parsers.lalr_analysis import LALR_Analyzer, Shift, IntParseTable
 from lark.utils import Serialize
 import cython
 from threading import RLock
+from types import SimpleNamespace
 
 from copy import copy, deepcopy
 from typing import Any, Iterator, Optional, Collection, Dict
@@ -95,6 +96,16 @@ cdef class Token:
 
     def __lark_meta__(self):
         return self
+
+cdef Token _to_native_token(token):
+    return Token(
+        token.type, token.value,
+        token.start_pos if token.start_pos is not None else -1,
+        token.line if token.line is not None else -1,
+        token.column if token.column is not None else -1,
+        token.end_line, token.end_column, token.end_pos,
+    )
+
 
 cdef class LexerState:
     __slots__ = "text", "line_ctr", "last_token"
@@ -221,6 +232,8 @@ cdef class Lexer:
     Method Signatures:
         lex(self, lexer_state, parser_state) -> Iterator[Token]
     """
+    cdef public object _runtime
+
     # def lex(self, lexer_state: LexerState, parser_state: Any) -> Iterator[Token]:
     #    return NotImplemented
 
@@ -247,8 +260,10 @@ cdef class BasicLexer(Lexer):
     cdef object _scanner_lock
 
     def __init__(self, conf: "LexerConf") -> None:
+        self._runtime = getattr(conf, "_lark_cython_runtime", _DEFAULT_RUNTIME)
         terminals = list(conf.terminals)
-        assert all(isinstance(t, TerminalDef) for t in terminals), terminals
+        assert all(
+            isinstance(t, self._runtime.TerminalDef) for t in terminals), terminals
 
         self.re = conf.re_module
 
@@ -258,17 +273,19 @@ cdef class BasicLexer(Lexer):
                 try:
                     self.re.compile(t.pattern.to_regexp(), conf.g_regex_flags)
                 except self.re.error:
-                    raise LexError("Cannot compile token %s: %s" % (t.name, t.pattern))
+                    raise self._runtime.LexError(
+                        "Cannot compile token %s: %s" % (t.name, t.pattern))
 
                 if t.pattern.min_width == 0:
-                    raise LexError(
+                    raise self._runtime.LexError(
                         "Lexer does not allow zero-width terminals. (%s: %s)"
                         % (t.name, t.pattern)
                     )
 
             if not (set(conf.ignore) <= {t.name for t in terminals}):
-                raise LexError("Ignore terminals are not defined: %s" %
-                               (set(conf.ignore) - {t.name for t in terminals}))
+                raise self._runtime.LexError(
+                    "Ignore terminals are not defined: %s"
+                    % (set(conf.ignore) - {t.name for t in terminals}))
 
         # Init
         self.newline_types = frozenset(
@@ -287,7 +304,7 @@ cdef class BasicLexer(Lexer):
         self._scanner = None
 
     cdef _build_scanner(self):
-        terminals, self.callback = _create_unless(
+        terminals, self.callback = self._runtime.create_unless(
             self.terminals, self.g_regex_flags, self.re, self.use_bytes)
         assert all(self.callback.values())
 
@@ -334,7 +351,7 @@ cdef class BasicLexer(Lexer):
                 allowed = self.scanner.allowed_types - self.ignore_types
                 if not allowed:
                     allowed = {"<END-OF-FILE>"}
-                raise UnexpectedCharacters(
+                raise self._runtime.UnexpectedCharacters(
                     lex_state.text, line_ctr.char_pos,
                     line_ctr.line, line_ctr.column,
                     allowed=allowed,
@@ -354,8 +371,10 @@ cdef class BasicLexer(Lexer):
                 t.end_pos = line_ctr.char_pos
                 if t.type in self.callback:
                     callback_result = self.callback[t.type](t)
+                    if isinstance(callback_result, self._runtime.Token):
+                        callback_result = _to_native_token(callback_result)
                     if not isinstance(callback_result, Token):
-                        raise LexError(
+                        raise self._runtime.LexError(
                             "Callbacks must return a token (returned %r)"
                             % callback_result)
                     t = callback_result
@@ -381,6 +400,7 @@ cdef class ContextualLexer(Lexer):
         always_accept: Collection[str] = (),
     ):
 
+        self._runtime = getattr(conf, "_lark_cython_runtime", _DEFAULT_RUNTIME)
         terminals = list(conf.terminals)
         terminals_by_name = conf.terminals_by_name
 
@@ -416,19 +436,19 @@ cdef class ContextualLexer(Lexer):
         try:
             lexer = self.lexers[parser_state.position]
             return lexer.next_token(lexer_state, parser_state)
-        except UnexpectedCharacters as e:
+        except self._runtime.UnexpectedCharacters as e:
             # The terminal may be defined, but not in the current context.
             # This tests the input against the global context, to provide a nicer error.
             try:
                 # Preserve last_token before root_lexer.next_token changes it.
                 last_token = lexer_state.last_token
                 token = self.root_lexer.next_token(lexer_state, parser_state)
-                raise UnexpectedToken(
+                raise self._runtime.UnexpectedToken(
                     token, e.allowed, state=parser_state,
                     token_history=[last_token],
                     terminals_by_name=self.root_lexer.terminals_by_name,
                 )
-            except UnexpectedCharacters:
+            except self._runtime.UnexpectedCharacters:
                 # The root lexer has the wrong expected set; use the original.
                 raise e
 
@@ -444,10 +464,12 @@ cdef class LexerThread:
     """Tie a lexer instance and its state together for the parser."""
 
     cdef Lexer lexer
+    cdef public object _runtime
     cdef public LexerState state
 
     def __init__(self, lexer, LexerState lexer_state):
         self.lexer = lexer
+        self._runtime = lexer._runtime
         self.state = lexer_state
 
     @classmethod
@@ -474,12 +496,14 @@ cdef class ParseConf:
     )
 
     cdef public parse_table
+    cdef public object _runtime
     cdef public int start_state, end_state
     cdef dict states
     cdef public dict callbacks
     cdef str start
 
-    def __init__(self, parse_table, callbacks, start):
+    def __init__(self, parse_table, callbacks, start, runtime=None):
+        self._runtime = _DEFAULT_RUNTIME if runtime is None else runtime
         self.parse_table = parse_table
 
         self.start_state = self.parse_table.start_states[start]
@@ -528,14 +552,8 @@ cdef class ParserState:
         )
 
     cpdef feed_token(self, token, bint is_end=False):
-        if isinstance(token, LarkToken):
-            token = Token(
-                token.type, token.value,
-                token.start_pos if token.start_pos is not None else -1,
-                token.line if token.line is not None else -1,
-                token.column if token.column is not None else -1,
-                token.end_line, token.end_column, token.end_pos,
-            )
+        if isinstance(token, (LarkToken, self.parse_conf._runtime.Token)):
+            token = _to_native_token(token)
         elif not isinstance(token, Token):
             raise TypeError("feed_token expects a Lark or lark-cython Token")
         return self._feed_token(token, is_end)
@@ -563,8 +581,8 @@ cdef class ParserState:
             except KeyError:
                 # expected = {s for s in states[state].keys() if s.isupper()}
                 expected = set(filter(str.isupper, states[state].keys()))
-                raise UnexpectedToken(token, expected, state=self,
-                                      interactive_parser=None)
+                raise self.parse_conf._runtime.UnexpectedToken(
+                    token, expected, state=self, interactive_parser=None)
 
             assert arg != end_state
 
@@ -621,16 +639,18 @@ cdef class _Parser:
         self, lexer, start, value_stack=None, state_stack=None,
         start_interactive=False,
     ):
-        parse_conf = ParseConf(self.parse_table, self.callbacks, start)
+        runtime = lexer._runtime
+        parse_conf = ParseConf(self.parse_table, self.callbacks, start, runtime)
         parser_state = ParserState(parse_conf, lexer, state_stack, value_stack)
         if start_interactive:
-            return InteractiveParser(self, parser_state, parser_state.lexer)
+            return runtime.InteractiveParser(self, parser_state, parser_state.lexer)
         return self.parse_from_state(parser_state)
 
     cpdef parse_from_state(self, ParserState state, Token last_token=None):
         # Main LALR-parser loop
         cdef Token token
         cdef Token end_token
+        runtime = state.parse_conf._runtime
 
         try:
             token = last_token
@@ -645,8 +665,8 @@ cdef class _Parser:
             end_token = Token.new_borrow_pos(
                 "$END", "", token) if token else Token("$END", "", 0, 1, 1)
             return state._feed_token(end_token, True)
-        except UnexpectedInput as e:
-            e.interactive_parser = InteractiveParser(self, state, state.lexer)
+        except runtime.UnexpectedInput as e:
+            e.interactive_parser = runtime.InteractiveParser(self, state, state.lexer)
             raise e
         except Exception as e:
             if self.debug:
@@ -685,40 +705,41 @@ class LALR_Parser(Serialize):
         return self.parser.parse(lexer, start, start_interactive=True)
 
     def parse(self, lexer, start, on_error=None):
+        runtime = lexer._runtime
         try:
             return self.parser.parse(lexer, start)
-        except UnexpectedInput as e:
+        except runtime.UnexpectedInput as e:
             if on_error is None:
                 raise
 
             error = e
 
-        return self._recover(error, on_error)
+        return self._recover(error, on_error, runtime)
 
-    def _recover(self, e, on_error):
+    def _recover(self, e, on_error, runtime):
         while True:
-            if isinstance(e, UnexpectedCharacters):
+            if isinstance(e, runtime.UnexpectedCharacters):
                 s = e.interactive_parser.lexer_thread.state
                 p = s.line_ctr.char_pos
 
             if not on_error(e):
                 raise e
 
-            if isinstance(e, UnexpectedCharacters):
+            if isinstance(e, runtime.UnexpectedCharacters):
                 # If user didn't change the character position, then we should
                 if p == s.line_ctr.char_pos:
                     s.line_ctr.feed(s.text[p:p + 1])
 
             try:
                 return e.interactive_parser.resume_parse()
-            except UnexpectedToken as e2:
-                if (isinstance(e, UnexpectedToken)
+            except runtime.UnexpectedToken as e2:
+                if (isinstance(e, runtime.UnexpectedToken)
                     and e.token.type == e2.token.type == "$END"
                         and e.interactive_parser == e2.interactive_parser):
                     # Prevent infinite loop
                     raise e2
                 e = e2
-            except UnexpectedCharacters as e2:
+            except runtime.UnexpectedCharacters as e2:
                 e = e2
 
 # }
@@ -1191,3 +1212,12 @@ plugins = {
     "LALR_Parser": LALR_Parser,
     "_Parser": _Parser,     # XXX Ugly
 }
+
+
+_DEFAULT_RUNTIME = SimpleNamespace(
+    Token=LarkToken, TerminalDef=TerminalDef,
+    create_unless=_create_unless,
+    LexError=LexError, UnexpectedInput=UnexpectedInput,
+    UnexpectedToken=UnexpectedToken, UnexpectedCharacters=UnexpectedCharacters,
+    InteractiveParser=InteractiveParser,
+)

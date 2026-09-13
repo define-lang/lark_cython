@@ -128,7 +128,7 @@ cache-keys = [
     {file = "setup.py"},
     {file = "README.md"},
     {file = "MANIFEST.in"},
-    {file = "lark_cython/__init__.py"},
+    {file = "lark_cython/*.py"},
     {file = "lark_cython/*.pyx"},
     {env = "LARK_CYTHON_COVERAGE"},
 ]
