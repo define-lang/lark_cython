@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     from lark_cython.lark_cython import InteractiveParser
 
 
+def test_parser_state_rejects_a_bare_token_value():
+    parser = Lark("start: WORD\n%import common.WORD", parser="lalr", _plugins=plugins)
+    cursor = cast("InteractiveParser", parser.parse_interactive(""))
+    with pytest.raises(TypeError, match="feed_token expects a Lark"):
+        cursor.parser_state.feed_token(cast("Token", "hello"))
+
+
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
 def test_interactive_parsing_and_independent_copies(
     lexer: Literal["basic", "contextual"],

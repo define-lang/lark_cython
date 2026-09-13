@@ -52,3 +52,41 @@ uv run cython -a -o /tmp/lark-cython-annotated.c lark_cython/lark_cython.pyx
 Open `/tmp/lark-cython-annotated.html`. Expand a source line to inspect its generated
 C. Highlighting measures Python interaction, not execution time; it does not
 establish that a line is a bottleneck.
+
+## External Define workloads
+
+`corpus_bench.py` accepts an external Define checkout and explicit valid source
+files. It checks Python/native output parity before timing a batch of preloaded
+sources. The checkout and its fixtures are not dependencies of this repository's
+tests. Use the same frozen inputs for every comparison:
+
+```sh
+uv run python benchmarks/corpus_bench.py \
+  --define-checkout ~/projects/define \
+  --sources /tmp/parser-stress.dfn \
+  --backend cython --mode ordinary --name stress \
+  --affinity 2 -o /tmp/define-cython.json
+```
+
+Repeat with `--backend python` for the reference implementation. Available modes
+are `ordinary` (Lark trees), `standalone` (a fresh generated parser), and `ast`
+(Define's actual embedded transformer and generated parser). AST mode requires
+Define's generated modules and their runtime dependencies to be available in the
+selected environment. Invalid inputs fail the run rather than disappearing from
+the corpus. For a quick wiring check use `--debug-single-value`; it does not
+provide performance evidence.
+
+Generate fresh stress sources using Define's `profile-compiler` skill and the
+Bazel entry points under `tools/generators`. The parsing generator is
+`generate_large_define_source`; its `--lines` option controls workload size.
+Keep generation and file reads outside measurement. Record generator arguments,
+checkout revisions, source paths, and hashes alongside temporary results.
+
+For CPU profiling, `--profile-seconds 20` runs repeated parsing after parity
+validation. Use Linux perf with Python's `-X perf` support and verify Python and
+native stack resolution before interpreting the capture. Exclude setup and
+parity validation from the sampled interval. A separate diagnostic build may
+need `CFLAGS='-O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer'` for
+frame-pointer unwinding. Keep matching perf maps and native build IDs with the
+capture. Normal timing runs must use the uninstrumented release build with perf
+support disabled.

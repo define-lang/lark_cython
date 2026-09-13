@@ -108,16 +108,18 @@ cdef Token _to_native_token(token):
 
 
 cdef class LexerState:
-    __slots__ = "text", "line_ctr", "last_token"
+    __slots__ = "text", "line_ctr", "last_token", "_scanner_cache"
 
     cdef public str text
     cdef public LineCounter line_ctr
     cdef public object last_token
+    cdef dict _scanner_cache
 
     def __init__(self, text, line_ctr, last_token=None):
         self.text = text
         self.line_ctr = line_ctr
         self.last_token = last_token
+        self._scanner_cache = {}
 
     def __eq__(self, other):
         if not isinstance(other, LexerState):
@@ -130,7 +132,10 @@ cdef class LexerState:
         )
 
     def __copy__(self):
-        return type(self)(self.text, copy(self.line_ctr), self.last_token)
+        cdef LexerState result = type(self)(
+            self.text, copy(self.line_ctr), self.last_token)
+        result._scanner_cache.update(self._scanner_cache)
+        return result
 
     _Token = Token
 
@@ -258,6 +263,7 @@ cdef class BasicLexer(Lexer):
     cdef dict terminals_by_name
     cdef Scanner _scanner
     cdef object _scanner_lock
+    cdef object _scanner_cache_key
 
     def __init__(self, conf: "LexerConf") -> None:
         self._runtime = getattr(conf, "_lark_cython_runtime", _DEFAULT_RUNTIME)
@@ -301,6 +307,7 @@ cdef class BasicLexer(Lexer):
         self.terminals_by_name = conf.terminals_by_name
 
         self._scanner_lock = RLock()
+        self._scanner_cache_key = object()
         self._scanner = None
 
     cdef _build_scanner(self):
@@ -328,8 +335,13 @@ cdef class BasicLexer(Lexer):
                 self._build_scanner()
             return self._scanner
 
-    cdef match(self, text, pos):
-        return self.scanner.match(text, pos)
+    cdef Scanner _scanner_for_state(self, LexerState state):
+        # Avoid taking the shared initialization lock for every token.
+        cdef Scanner scanner = state._scanner_cache.get(self._scanner_cache_key)
+        if scanner is None:
+            scanner = self.scanner
+            state._scanner_cache[self._scanner_cache_key] = scanner
+        return scanner
 
     def lex(self, state, parser_state):
         try:
@@ -344,11 +356,17 @@ cdef class BasicLexer(Lexer):
         cdef str type_
         cdef Token t
         cdef Token t2
+        cdef Scanner scanner
+
+        if line_ctr.char_pos >= len(lex_state.text):
+            raise EOFError(self)
+
+        scanner = self._scanner_for_state(lex_state)
 
         while line_ctr.char_pos < len(lex_state.text):
-            res = self.match(lex_state.text, line_ctr.char_pos)
+            res = scanner.match(lex_state.text, line_ctr.char_pos)
             if not res:
-                allowed = self.scanner.allowed_types - self.ignore_types
+                allowed = scanner.allowed_types - self.ignore_types
                 if not allowed:
                     allowed = {"<END-OF-FILE>"}
                 raise self._runtime.UnexpectedCharacters(
@@ -584,11 +602,10 @@ cdef class ParserState:
                 raise self.parse_conf._runtime.UnexpectedToken(
                     token, expected, state=self, interactive_parser=None)
 
-            assert arg != end_state
-
             if action is Shift:
                 # shift once and return
                 assert not is_end
+                assert arg != end_state
                 state_stack.append(arg)
                 value_stack.append(
                     token if token.type not in callbacks

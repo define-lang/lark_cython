@@ -62,6 +62,21 @@ def test_keyword_callback_chain_does_not_transform_other_token_types():
     assert seen == ["example", "12"]
 
 
+def test_unhashable_basic_lexer_subclass_can_parse():
+    class EqualBasicLexer(BasicLexer):
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, EqualBasicLexer)
+
+    custom_plugins = {**plugins, "BasicLexer": EqualBasicLexer}
+    parser = Lark(
+        "start: WORD\n%import common.WORD",
+        parser="lalr",
+        lexer="basic",
+        _plugins=custom_plugins,
+    )
+    assert parser.parse("example") == Tree("start", [Token("WORD", "example")])
+
+
 def test_empty_grammar_reports_end_of_file_as_expected():
     parser = Lark("start:", parser="lalr", _plugins=plugins)
     assert parser.parse("") == Tree("start", [])

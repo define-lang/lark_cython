@@ -6,6 +6,7 @@ import pytest
 from lark import Lark
 from lark import Tree as PythonTree
 from lark.common import ParserConf
+from lark.exceptions import ConfigurationError
 
 from lark_cython import Token
 from lark_cython.lark_cython import (
@@ -20,6 +21,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lark.tree import Meta as PythonMeta
+
+
+def test_native_tree_builder_rejects_an_invalid_position_option():
+    with pytest.raises(
+        ConfigurationError, match="Invalid option for propagate_positions"
+    ):
+        parse_native_tree(
+            'start: "hello"', "hello", propagate_positions=cast("bool", "invalid")
+        )
 
 
 @overload

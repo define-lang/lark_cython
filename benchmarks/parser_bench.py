@@ -15,6 +15,7 @@ from lark.lexer import Lexer as PythonLexer
 from lark.lexer import LexerThread
 from lark.lexer import Token as PythonToken
 
+import lark_cython.lark_cython as native
 from lark_cython import Token, plugins
 from lark_cython.lark_cython import BasicLexer
 
@@ -121,9 +122,16 @@ def main() -> None:
     runner.metadata["backend"] = args.backend
     runner.metadata["lark_version"] = version("lark")
     runner.metadata["cython_version"] = version("cython")
-    runner.metadata["extension_source_sha256"] = hashlib.sha256(
-        (Path(__file__).parents[1] / "lark_cython/lark_cython.pyx").read_bytes()
+    extension_path = Path(native.__file__).resolve()
+    runner.metadata["extension_path"] = str(extension_path)
+    runner.metadata["extension_binary_sha256"] = hashlib.sha256(
+        extension_path.read_bytes()
     ).hexdigest()
+    source_path = extension_path.with_name("lark_cython.pyx")
+    if source_path.is_file():
+        runner.metadata["extension_source_sha256"] = hashlib.sha256(
+            source_path.read_bytes()
+        ).hexdigest()
     for name, (grammar, source) in WORKLOADS.items():
         runner.metadata[f"{name}_input_sha256"] = hashlib.sha256(
             source.encode()

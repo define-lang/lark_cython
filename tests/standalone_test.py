@@ -40,6 +40,7 @@ def test_generated_parser_parses_keywords_and_positions(generated: ModuleType):
     native = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     expected = normal.parse("if name 123")
     actual = native.parse("if name 123")
+    assert type(actual) is generated.Tree
     assert all(isinstance(t, Token) for t in actual.children)
     assert actual.data == expected.data
     assert [(t.type, t.value, t.start_pos, t.end_pos) for t in actual.children] == [
@@ -67,6 +68,18 @@ def test_generated_tokens_can_be_fed_interactively(generated: ModuleType):
     assert cursor.accepts() == {"INT"}
     cursor.feed_token(generated.Token("INT", "123"))
     assert [t.value for t in cursor.feed_eof().children] == ["name", "123"]
+
+
+def test_generated_lexer_rejects_callback_returning_a_value(generated: ModuleType):
+    def unwrapped_value(token: Token) -> object:
+        return token.value
+
+    parser = generated.Lark_StandAlone(
+        _plugins=standalone_plugins(generated),
+        lexer_callbacks={"NAME": unwrapped_value},
+    )
+    with pytest.raises(generated.LexError, match="Callbacks must return a token"):
+        parser.parse("if name 123")
 
 
 def test_generated_parser_can_recover(generated: ModuleType):
