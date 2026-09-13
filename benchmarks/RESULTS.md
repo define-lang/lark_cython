@@ -19,9 +19,8 @@ uv run python benchmarks/parser_bench.py --backend python \
 ```
 
 The run order was Python A, Cython A, Cython B, Python B, then typed A and typed B.
-Each JSON file contains all ten benchmarks and the environment/source/input
-metadata. The candidate was rebuilt before its measurements; all 147 behavior
-tests passed. No benchmark suites ran concurrently.
+Each run covered all ten benchmarks. The candidate was rebuilt before its
+measurements; all 147 behavior tests passed. No benchmark suites ran concurrently.
 
 pyperf warns that several results lack enough samples to establish less than 1%
 variation at 95% confidence. Repeated unchanged Cython runs differed by roughly
@@ -73,16 +72,8 @@ unpacking, dictionary lookup, rule attribute access, and callbacks. These are
 future profiling candidates, not established bottlenecks. No branch hints,
 unchecked indexing, GIL changes, or other speculative optimizations were added.
 
-## Reproduce the analysis
+## Rerun the measurements
 
-```sh
-uv run pyperf compare_to benchmarks/results/python-a.json benchmarks/results/cython-a.json --table
-uv run pyperf compare_to benchmarks/results/python-b.json benchmarks/results/cython-b.json --table
-uv run pyperf compare_to benchmarks/results/cython-a.json benchmarks/results/cython-b.json --table
-uv run pyperf compare_to benchmarks/results/cython-a.json benchmarks/results/typed-a.json --table
-uv run pyperf compare_to benchmarks/results/cython-b.json benchmarks/results/typed-b.json --table
-uv run pyperf check benchmarks/results/*.json
-```
-
-The raw [results](results/) preserve pyperf's warnings and individual samples.
-See the [benchmark guide](README.md) to rerun measurements or generate annotated C.
+See the [benchmark guide](README.md) to generate fresh measurements in `/tmp` or
+inspect annotated C. Raw measurements and generated code are temporary artifacts
+and are not checked in.
