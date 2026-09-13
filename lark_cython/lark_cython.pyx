@@ -478,12 +478,10 @@ cdef class LexerThread:
     """Tie a lexer instance and its state together for the parser."""
 
     cdef Lexer lexer
-    cdef public object _runtime
     cdef public LexerState state
 
     def __init__(self, lexer, LexerState lexer_state):
         self.lexer = lexer
-        self._runtime = lexer._runtime
         self.state = lexer_state
 
     @classmethod
@@ -506,13 +504,12 @@ cdef class LexerThread:
 
 cdef class ParseConf:
     __slots__ = (
-        "parse_table", "callbacks", "start_state", "end_state", "states",
+        "parse_table", "callbacks", "start_state", "end_state",
     )
 
     cdef public parse_table
     cdef public object _runtime
     cdef public int start_state, end_state
-    cdef dict states
     cdef public dict callbacks
 
     def __init__(self, parse_table, callbacks, start, runtime=None):
@@ -520,7 +517,6 @@ cdef class ParseConf:
         self.parse_table = parse_table
         self.start_state = parse_table.start_states[start]
         self.end_state = parse_table.end_states[start]
-        self.states = parse_table.states
 
         self.callbacks = callbacks
 
@@ -573,7 +569,7 @@ cdef class ParserState:
         cdef:
             list state_stack = self.state_stack
             list value_stack = self.value_stack
-            dict states = self.parse_conf.states
+            dict states = self.parse_conf.parse_table.states
             int end_state = self.parse_conf.end_state
             dict callbacks = self.parse_conf.callbacks
 
@@ -646,10 +642,10 @@ cdef class _Parser:
         self.debug = debug
 
     def parse(
-        self, lexer, start, value_stack=None, state_stack=None,
+        self, LexerThread lexer, start, value_stack=None, state_stack=None,
         start_interactive=False,
     ):
-        runtime = lexer._runtime
+        runtime = lexer.lexer._runtime
         parse_conf = ParseConf(self.parse_table, self.callbacks, start, runtime)
         parser_state = ParserState(parse_conf, lexer, state_stack, value_stack)
         if start_interactive:
@@ -711,11 +707,11 @@ class LALR_Parser(Serialize):
     def serialize(self, memo):
         return self._parse_table.serialize(memo)
 
-    def parse_interactive(self, lexer, start):
+    def parse_interactive(self, LexerThread lexer, start):
         return self.parser.parse(lexer, start, start_interactive=True)
 
-    def parse(self, lexer, start, on_error=None):
-        runtime = lexer._runtime
+    def parse(self, LexerThread lexer, start, on_error=None):
+        runtime = lexer.lexer._runtime
         try:
             return self.parser.parse(lexer, start)
         except runtime.UnexpectedInput as e:
@@ -833,8 +829,10 @@ cdef class Tree:
         seen = {id(self)}
         for subtree in queue:
             for child in reversed(subtree.children):
+                if not isinstance(child, Tree):
+                    continue
                 child_id = id(child)
-                if isinstance(child, Tree) and child_id not in seen:
+                if child_id not in seen:
                     seen.add(child_id)
                     queue.append(child)
 
