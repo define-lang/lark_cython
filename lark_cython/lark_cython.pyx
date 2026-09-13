@@ -1,5 +1,4 @@
 # cython: language_level=3, freethreading_compatible=True
-from collections import OrderedDict
 from lark.visitors import _vargs_meta, _vargs_meta_inline
 from lark.visitors import Transformer_InPlace
 from functools import partial, wraps
@@ -21,11 +20,6 @@ from lark.exceptions import (
 )
 from lark.lexer import CallChain, _create_unless, TerminalDef, _regexp_has_newline
 from lark.lexer import Token as LarkToken
-
-
-ctypedef fused Token_or_str:
-    Token
-    str
 
 
 @cython.freelist(10240)
@@ -272,8 +266,10 @@ cdef class BasicLexer(Lexer):
             isinstance(t, self._runtime.TerminalDef) for t in terminals), terminals
 
         self.re = conf.re_module
+        self.ignore_types = frozenset(conf.ignore)
 
         if not conf.skip_validation:
+            terminal_names = {t.name for t in terminals}
             # Sanitization
             for t in terminals:
                 try:
@@ -288,15 +284,15 @@ cdef class BasicLexer(Lexer):
                         % (t.name, t.pattern)
                     )
 
-            if not (set(conf.ignore) <= {t.name for t in terminals}):
+            undefined_ignore_types = self.ignore_types - terminal_names
+            if undefined_ignore_types:
                 raise self._runtime.LexError(
                     "Ignore terminals are not defined: %s"
-                    % (set(conf.ignore) - {t.name for t in terminals}))
+                    % undefined_ignore_types)
 
         # Init
         self.newline_types = frozenset(
             t.name for t in terminals if _regexp_has_newline(t.pattern.to_regexp()))
-        self.ignore_types = frozenset(conf.ignore)
 
         terminals.sort(key=lambda x: (-x.priority, -
                        x.pattern.max_width, -len(x.pattern.value), x.name))
@@ -426,13 +422,14 @@ cdef class ContextualLexer(Lexer):
         trad_conf.terminals = terminals
 
         lexer_by_tokens: Dict[FrozenSet[str], BasicLexer] = {}
+        extra_accepts = set(conf.ignore).union(always_accept)
         self.lexers = {}
         for state, accepts in states.items():
             key = frozenset(accepts)
             try:
                 lexer = lexer_by_tokens[key]
             except KeyError:
-                accepts = set(accepts) | set(conf.ignore) | set(always_accept)
+                accepts = set(accepts) | extra_accepts
                 lexer_conf = copy(trad_conf)
                 lexer_conf.terminals = [terminals_by_name[n]
                                         for n in accepts if n in terminals_by_name]
@@ -441,7 +438,6 @@ cdef class ContextualLexer(Lexer):
 
             self.lexers[state] = lexer
 
-        assert trad_conf.terminals is terminals
         self.root_lexer = BasicLexer(trad_conf)
 
     cpdef public make_lexer_state(self, str text):
@@ -510,7 +506,7 @@ cdef class LexerThread:
 
 cdef class ParseConf:
     __slots__ = (
-        "parse_table", "callbacks", "start", "start_state", "end_state", "states",
+        "parse_table", "callbacks", "start_state", "end_state", "states",
     )
 
     cdef public parse_table
@@ -518,18 +514,15 @@ cdef class ParseConf:
     cdef public int start_state, end_state
     cdef dict states
     cdef public dict callbacks
-    cdef str start
 
     def __init__(self, parse_table, callbacks, start, runtime=None):
         self._runtime = _DEFAULT_RUNTIME if runtime is None else runtime
         self.parse_table = parse_table
-
-        self.start_state = self.parse_table.start_states[start]
-        self.end_state = self.parse_table.end_states[start]
-        self.states = self.parse_table.states
+        self.start_state = parse_table.start_states[start]
+        self.end_state = parse_table.end_states[start]
+        self.states = parse_table.states
 
         self.callbacks = callbacks
-        self.start = start
 
 
 cdef class ParserState:
@@ -685,7 +678,7 @@ cdef class _Parser:
         except runtime.UnexpectedInput as e:
             e.interactive_parser = runtime.InteractiveParser(self, state, state.lexer)
             raise e
-        except Exception as e:
+        except Exception:
             if self.debug:
                 print("")
                 print("STATE STACK DUMP")
@@ -771,10 +764,6 @@ cdef class Meta:
         self.empty = True
 
 
-ctypedef fused Child:
-    Tree
-    Token
-
 cdef class Tree:
     cdef public object data
     cdef public list children  # : 'List[Union[str, Tree]]'
@@ -841,14 +830,15 @@ cdef class Tree:
         Visit each subtree once, even when the parse tree is a DAG.
         """
         queue = [self]
-        subtrees = OrderedDict()
+        seen = {id(self)}
         for subtree in queue:
-            subtrees[id(subtree)] = subtree
-            queue += [c for c in reversed(subtree.children)
-                      if isinstance(c, Tree) and id(c) not in subtrees]
+            for child in reversed(subtree.children):
+                child_id = id(child)
+                if isinstance(child, Tree) and child_id not in seen:
+                    seen.add(child_id)
+                    queue.append(child)
 
-        del queue
-        return reversed(list(subtrees.values()))
+        return reversed(queue)
 
     def find_pred(self, pred: "Callable[[Tree], bool]") -> "Iterator[Tree]":
         """Returns all nodes of the tree that evaluate pred(node) as true."""
@@ -1159,14 +1149,14 @@ class ParseTreeBuilder:
         maybe_placeholders=False,
     ):
         self.tree_class = tree_class
-        self.propagate_positions = propagate_positions
-        self.ambiguous = ambiguous
-        self.maybe_placeholders = maybe_placeholders
+        self.rule_builders = list(self._init_builders(
+            rules, propagate_positions, ambiguous, maybe_placeholders,
+        ))
 
-        self.rule_builders = list(self._init_builders(rules))
-
-    def _init_builders(self, rules):
-        propagate_positions = make_propagate_positions(self.propagate_positions)
+    def _init_builders(
+        self, rules, propagate_positions, ambiguous, maybe_placeholders,
+    ):
+        propagate_positions = make_propagate_positions(propagate_positions)
 
         for rule in rules:
             options = rule.options
@@ -1176,8 +1166,8 @@ class ParseTreeBuilder:
             wrapper_chain = list(filter(None, [
                 (expand_single_child and not rule.alias) and ExpandSingleChild,
                 maybe_create_child_filter(
-                    rule.expansion, keep_all_tokens, self.ambiguous,
-                    options.empty_indices if self.maybe_placeholders else None,
+                    rule.expansion, keep_all_tokens, ambiguous,
+                    options.empty_indices if maybe_placeholders else None,
                 ),
                 propagate_positions,
             ]))
