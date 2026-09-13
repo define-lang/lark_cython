@@ -60,6 +60,11 @@ in this configuration.
 CI runs these hooks and builds and tests the source distribution on Python
 3.10–3.14 on Linux. Cross-platform wheel builds are manual.
 
+### Performance measurements
+
+See [the benchmark guide](benchmarks/README.md) for repeatable comparisons with
+standard Lark and instructions for inspecting annotated Cython output.
+
 ### Cython coverage
 
 Normal builds omit line-tracing instrumentation. Use a separate Python 3.11
