@@ -881,11 +881,10 @@ cdef class Tree:
         stack = [self]
         while stack:
             node = stack.pop()
-            if not isinstance(node, Tree):
-                continue
             yield node
-            for n in reversed(node.children):
-                stack.append(n)
+            for child in reversed(node.children):
+                if isinstance(child, Tree):
+                    stack.append(child)
 
     def __deepcopy__(self, memo):
         return type(self)(self.data, deepcopy(self.children, memo), meta=self._meta)
