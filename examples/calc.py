@@ -15,9 +15,15 @@ Main differences from Lark's example code:
 
 from __future__ import annotations
 
+import operator
+from typing import TYPE_CHECKING, cast
+
 from lark import Lark, Transformer, v_args
 
 import lark_cython
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 calc_grammar = """
     ?start: sum
@@ -45,11 +51,12 @@ calc_grammar = """
 
 
 @v_args(inline=True)  # Affects the signatures of the methods
-class CalculateTree(Transformer):
+class CalculateTree(Transformer[lark_cython.Token, float]):
     """Evaluate arithmetic expressions and store variable values."""
 
     from operator import add, mul, neg, sub
-    from operator import truediv as div
+
+    div = staticmethod(cast("Callable[[float, float], float]", operator.truediv))
 
     def number(self, t: lark_cython.Token) -> float:
         """Convert a number token to its numeric value."""
@@ -59,16 +66,16 @@ class CalculateTree(Transformer):
         """Extract a variable name from its token."""
         return t.value
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Start with an empty variable environment."""
-        self.vars = {}
+        self.vars: dict[str, float] = {}
 
-    def assign_var(self, name, value):
+    def assign_var(self, name: str, value: float) -> float:
         """Assign and return a variable value."""
         self.vars[name] = value
         return value
 
-    def var(self, name):
+    def var(self, name: str) -> float:
         """Look up a previously assigned variable."""
         try:
             return self.vars[name]
@@ -82,10 +89,10 @@ calc_parser = Lark(
     transformer=CalculateTree(),
     _plugins=lark_cython.plugins,
 )
-calc = calc_parser.parse
+calc = cast("Callable[[str], float]", calc_parser.parse)
 
 
-def main():
+def main() -> None:
     """Read and evaluate expressions until end of input."""
     while True:
         try:

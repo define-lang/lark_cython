@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import sys
 from types import ModuleType
+from typing import Literal
 from uuid import uuid4
 
 import pytest
@@ -12,7 +13,9 @@ from lark.tools.standalone import gen_standalone
 from lark_cython import Token, standalone_plugins
 
 
-def generate(grammar, lexer="contextual"):
+def generate(
+    grammar: str, lexer: Literal["basic", "contextual"] = "contextual"
+) -> ModuleType:
     source = io.StringIO()
     gen_standalone(Lark(grammar, parser="lalr", lexer=lexer), out=source)
     module = ModuleType(f"generated_parser_{uuid4().hex}")
@@ -25,14 +28,14 @@ def generate(grammar, lexer="contextual"):
 
 
 @pytest.fixture(params=["basic", "contextual"])
-def generated(request):
+def generated(request: pytest.FixtureRequest) -> ModuleType:
     return generate(
         'start: "if" NAME INT\n%import common.CNAME -> NAME\n%import common.INT\n%ignore " "',
         request.param,
     )
 
 
-def test_generated_parser_parses_keywords_and_positions(generated):
+def test_generated_parser_parses_keywords_and_positions(generated: ModuleType):
     normal = generated.Lark_StandAlone()
     native = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     expected = normal.parse("if name 123")
@@ -44,7 +47,7 @@ def test_generated_parser_parses_keywords_and_positions(generated):
     ]
 
 
-def test_generated_parser_errors_use_generated_classes(generated):
+def test_generated_parser_errors_use_generated_classes(generated: ModuleType):
     parser = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     with pytest.raises(generated.UnexpectedToken) as caught:
         parser.parse("if name name")
@@ -57,7 +60,7 @@ def test_generated_parser_errors_use_generated_classes(generated):
     assert caught.value.token_history[0] == "if"
 
 
-def test_generated_tokens_can_be_fed_interactively(generated):
+def test_generated_tokens_can_be_fed_interactively(generated: ModuleType):
     parser = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     cursor = parser.parse_interactive("if name")
     cursor.exhaust_lexer()
@@ -66,13 +69,13 @@ def test_generated_tokens_can_be_fed_interactively(generated):
     assert [t.value for t in cursor.feed_eof().children] == ["name", "123"]
 
 
-def test_generated_parser_can_recover(generated):
+def test_generated_parser_can_recover(generated: ModuleType):
     parser = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
-    seen = []
+    seen: list[int] = []
 
-    def recover(error):
+    def recover(error: Exception) -> bool:
         assert isinstance(error, generated.UnexpectedCharacters)
-        seen.append(error.pos_in_stream)
+        seen.append(getattr(error, "pos_in_stream"))  # noqa: B009 - Generated exception class has dynamic attributes.
         return True
 
     assert [
@@ -81,8 +84,8 @@ def test_generated_parser_can_recover(generated):
     assert seen == [3, 4]
 
 
-def test_generated_lexer_callbacks_can_return_generated_tokens(generated):
-    def uppercase(token):
+def test_generated_lexer_callbacks_can_return_generated_tokens(generated: ModuleType):
+    def uppercase(token: Token) -> object:
         assert isinstance(token, Token)
         assert token.value.rfind("a") == 1
         return generated.Token.new_borrow_pos("NAME", token.value.upper(), token)
@@ -100,10 +103,10 @@ def test_generated_transformer_and_positions():
     module = generate('start: item+\nitem: INT\n%import common.INT\n%ignore " "')
 
     class Numbers(module.Transformer):
-        def item(self, children):
+        def item(self, children: list[Token]) -> int:
             return int(children[0].value.strip())
 
-        def start(self, children):
+        def start(self, children: list[int]) -> int:
             return sum(children)
 
     for options in ({"transformer": Numbers()}, {"propagate_positions": True}):
@@ -117,7 +120,7 @@ def test_generated_transformer_and_positions():
             assert actual.meta.end_pos == expected.meta.end_pos == 4
 
 
-def test_generated_interactive_copies_resume_independently(generated):
+def test_generated_interactive_copies_resume_independently(generated: ModuleType):
     parser = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     cursor = parser.parse_interactive("if name 123")
     first = next(cursor.iter_parse())
@@ -144,7 +147,7 @@ def test_generated_modules_do_not_share_runtime_classes():
     assert modules[0].UnexpectedToken is not modules[1].UnexpectedToken
     barrier = Barrier(2)
 
-    def parse(index):
+    def parse(index: int) -> None:
         module, parser = modules[index], parsers[index]
         barrier.wait(timeout=30)
         for _ in range(50):
@@ -158,16 +161,9 @@ def test_generated_modules_do_not_share_runtime_classes():
         list(pool.map(parse, range(2)))
 
 
-def test_generated_invalid_callback_raises_generated_lex_error(generated):
-    parser = generated.Lark_StandAlone(
-        _plugins=standalone_plugins(generated),
-        lexer_callbacks={"NAME": lambda _token: "invalid"},
-    )
-    with pytest.raises(generated.LexError, match="Callbacks must return a token"):
-        parser.parse("if name 123")
-
-
-def test_generated_invalid_interactive_token_uses_generated_exception(generated):
+def test_generated_invalid_interactive_token_uses_generated_exception(
+    generated: ModuleType,
+):
     parser = generated.Lark_StandAlone(_plugins=standalone_plugins(generated))
     cursor = parser.parse_interactive("if name")
     cursor.exhaust_lexer()

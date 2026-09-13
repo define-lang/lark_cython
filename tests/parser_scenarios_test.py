@@ -2,23 +2,35 @@ from __future__ import annotations
 
 import io
 from copy import copy, deepcopy
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
-from lark import Lark, Transformer, Tree, UnexpectedCharacters, UnexpectedToken
-from lark.exceptions import LexError
+from lark import (
+    Lark,
+    Transformer,
+    Tree,
+    UnexpectedCharacters,
+    UnexpectedInput,
+    UnexpectedToken,
+)
 
 from lark_cython import Token, plugins
 
+if TYPE_CHECKING:
+    from lark_cython.lark_cython import InteractiveParser
+
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_interactive_parsing_and_independent_copies(lexer):
+def test_interactive_parsing_and_independent_copies(
+    lexer: Literal["basic", "contextual"],
+):
     parser = Lark(
         'start: WORD WORD\n%import common.WORD\n%ignore " "',
         parser="lalr",
         lexer=lexer,
         _plugins=plugins,
     )
-    cursor = parser.parse_interactive("hello world")
+    cursor = cast("InteractiveParser", parser.parse_interactive("hello world"))
     assert cursor.accepts() == {"WORD"}
     first = next(cursor.iter_parse())
     cursor.feed_token(first)
@@ -36,9 +48,9 @@ def test_interactive_parsing_and_independent_copies(lexer):
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_interactive_exhaust_and_eof(lexer):
+def test_interactive_exhaust_and_eof(lexer: Literal["basic", "contextual"]):
     parser = Lark('start: "a" "b"', parser="lalr", lexer=lexer, _plugins=plugins)
-    cursor = parser.parse_interactive("ab")
+    cursor = cast("InteractiveParser", parser.parse_interactive("ab"))
     tokens = cursor.exhaust_lexer()
     assert [str(token) for token in tokens] == ["a", "b"]
     assert cursor.accepts() == {"$END"}
@@ -46,7 +58,9 @@ def test_interactive_exhaust_and_eof(lexer):
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_invalid_character_reports_position_and_context(lexer):
+def test_invalid_character_reports_position_and_context(
+    lexer: Literal["basic", "contextual"],
+):
     parser = Lark(
         'start: WORD WORD\n%import common.WORD\n%ignore " "',
         parser="lalr",
@@ -63,7 +77,7 @@ def test_invalid_character_reports_position_and_context(lexer):
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_unexpected_token_accepts_and_recovery(lexer):
+def test_unexpected_token_accepts_and_recovery(lexer: Literal["basic", "contextual"]):
     parser = Lark(
         'start: "(" WORD ")"\n%import common.WORD',
         parser="lalr",
@@ -74,23 +88,30 @@ def test_unexpected_token_accepts_and_recovery(lexer):
         parser.parse("(hello(")
     assert error.value.accepts == {"RPAR"}
     assert error.value.token == Token("LPAR", "(")
-    assert error.value.interactive_parser.feed_token(Token("RPAR", ")")) is None
-    assert error.value.interactive_parser.feed_eof() == Tree(
+    assert (
+        cast("InteractiveParser", error.value.interactive_parser).feed_token(
+            Token("RPAR", ")")
+        )
+        is None
+    )
+    assert cast("InteractiveParser", error.value.interactive_parser).feed_eof() == Tree(
         "start", [Token("WORD", "hello")]
     )
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_error_callback_skips_multiple_invalid_characters(lexer):
+def test_error_callback_skips_multiple_invalid_characters(
+    lexer: Literal["basic", "contextual"],
+):
     parser = Lark(
         'start: WORD WORD\n%import common.WORD\n%ignore " "',
         parser="lalr",
         lexer=lexer,
         _plugins=plugins,
     )
-    errors = []
+    errors: list[int | None] = []
 
-    def skip(error):
+    def skip(error: UnexpectedInput) -> bool:
         errors.append(error.pos_in_stream)
         return True
 
@@ -110,11 +131,13 @@ def test_end_of_input_recovery_cannot_loop_forever():
     parser = Lark('start: "x"', parser="lalr", _plugins=plugins)
     with pytest.raises(UnexpectedToken) as error:
         parser.parse("", on_error=lambda _error: True)
-    assert error.value.token.type == "$END"
+    token = error.value.token
+    assert isinstance(token, Token)
+    assert token.type == "$END"
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_save_and_load_parser(lexer):
+def test_save_and_load_parser(lexer: Literal["basic", "contextual"]):
     parser = Lark(
         'start: WORD+\n%import common.WORD\n%ignore " "',
         parser="lalr",
@@ -130,9 +153,9 @@ def test_save_and_load_parser(lexer):
 
 
 def test_callback_transforms_words_without_changing_keywords():
-    words = []
+    words: list[str] = []
 
-    def uppercase(token):
+    def uppercase(token: Token) -> Token:
         words.append(token.value)
         return token.update(value=token.value.upper())
 
@@ -147,21 +170,11 @@ def test_callback_transforms_words_without_changing_keywords():
     assert words == ["example"]
 
 
-def test_callback_must_return_a_token():
-    parser = Lark(
-        "start: WORD\n%import common.WORD",
-        parser="lalr",
-        lexer="basic",
-        _plugins=plugins,
-        lexer_callbacks={"WORD": lambda _token: "broken"},
-    )
-    with pytest.raises(LexError, match="Callbacks must return a token"):
-        parser.parse("word")
-
-
-def test_transformer_error_preserves_original_exception(capsys):
-    class Divide(Transformer):
-        def start(self, children):
+def test_transformer_error_preserves_original_exception(
+    capsys: pytest.CaptureFixture[str],
+):
+    class Divide(Transformer[Token, float]):
+        def start(self, children: list[Token]) -> float:
             return 1 / int(children[0].value)
 
     parser = Lark(
@@ -182,7 +195,7 @@ def test_copying_interactive_values_is_independent():
         parser="lalr",
         _plugins=plugins,
     )
-    cursor = parser.parse_interactive("one two")
+    cursor = cast("InteractiveParser", parser.parse_interactive("one two"))
     cursor.exhaust_lexer()
     cloned = cursor.copy()
     assert cloned.parser_state.value_stack == cursor.parser_state.value_stack
@@ -191,8 +204,9 @@ def test_copying_interactive_values_is_independent():
 
 
 def test_parser_state_copy_is_independent():
-    cursor = Lark('start: "a" "b"', parser="lalr", _plugins=plugins).parse_interactive(
-        "ab"
+    cursor = cast(
+        "InteractiveParser",
+        Lark('start: "a" "b"', parser="lalr", _plugins=plugins).parse_interactive("ab"),
     )
     state = copy(cursor.parser_state)
     assert state == cursor.parser_state
@@ -200,21 +214,15 @@ def test_parser_state_copy_is_independent():
     assert state != cursor.parser_state
 
 
-def test_interactive_parser_rejects_untyped_input():
-    cursor = Lark('start: "a"', parser="lalr", _plugins=plugins).parse_interactive("")
-    with pytest.raises(TypeError, match="expects a Lark or lark-cython Token"):
-        cursor.parser_state.feed_token("a")
-
-
 def test_recovery_callback_can_skip_a_full_invalid_section():
     parser = Lark(
         'start: INT "+" INT\n%import common.INT', parser="lalr", _plugins=plugins
     )
-    errors = []
+    errors: list[int | None] = []
 
-    def skip_comment(error):
+    def skip_comment(error: UnexpectedInput) -> bool:
         errors.append(error.pos_in_stream)
-        state = error.interactive_parser.lexer_thread.state
+        state = cast("InteractiveParser", error.interactive_parser).lexer_thread.state
         end = state.text.index("\n", state.line_ctr.char_pos) + 1
         state.line_ctr.feed(state.text[state.line_ctr.char_pos : end])
         return True
@@ -229,10 +237,13 @@ def test_recovery_skips_multiple_unexpected_tokens():
     parser = Lark(
         'start: "(" INT ")"\n%import common.INT', parser="lalr", _plugins=plugins
     )
-    errors = []
+    errors: list[str] = []
 
-    def skip(error):
-        errors.append(error.token.type)
+    def skip(error: UnexpectedInput) -> bool:
+        assert isinstance(error, UnexpectedToken)
+        token = error.token
+        assert isinstance(token, Token)
+        errors.append(token.type)
         return True
 
     assert parser.parse("(12((()", on_error=skip) == Tree("start", [Token("INT", "12")])

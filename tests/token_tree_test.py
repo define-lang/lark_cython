@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pickle
 from copy import copy, deepcopy
+from typing import TYPE_CHECKING
 
 import pytest
 from lark import Lark
@@ -9,18 +10,23 @@ from lark import Lark
 from lark_cython import Token, plugins
 from lark_cython.lark_cython import Tree
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 @pytest.fixture
-def word():
+def word() -> Token:
     parser = Lark(
         "start: WORD\n%import common.WORD\n%ignore /[ \\n]+/",
         parser="lalr",
         _plugins=plugins,
     )
-    return parser.parse("\n  hello").children[0]
+    token = parser.parse("\n  hello").children[0]
+    assert isinstance(token, Token)
+    return token
 
 
-def test_token_values_comparisons_and_updates(word):
+def test_token_values_comparisons_and_updates(word: Token):
     assert str(word) == "hello"
     assert repr(word) == "Token('WORD', 'hello')"
     assert word == "hello"
@@ -28,7 +34,8 @@ def test_token_values_comparisons_and_updates(word):
     assert word != Token("OTHER", "hello")
     assert word != "world"
     assert word != object()
-    assert {word: 1}["hello"] == 1
+    mapping: dict[Token | str, int] = {word: 1}
+    assert mapping["hello"] == 1
     assert word.update() == word
     changed = word.update(type_="NAME", value="world")
     assert changed == Token("NAME", "world")
@@ -38,10 +45,13 @@ def test_token_values_comparisons_and_updates(word):
 
 
 @pytest.mark.parametrize("operation", [copy, deepcopy, pickle.dumps])
-def test_token_copy_and_serialization_preserve_locations(word, operation):
+def test_token_copy_and_serialization_preserve_locations(
+    word: Token, operation: Callable[[Token], Token | bytes]
+):
     result = operation(word)
     if isinstance(result, bytes):
         result = pickle.loads(result)  # noqa: S301 - Locally created test data.
+    assert isinstance(result, Token)
     assert result == word
     assert result is not word
     assert (result.start_pos, result.line, result.column) == (3, 2, 3)
@@ -56,7 +66,7 @@ def expression_tree():
     )
 
 
-def test_tree_display_and_equality(expression_tree):
+def test_tree_display_and_equality(expression_tree: Tree):
     assert expression_tree.pretty() == "sum\n  number\t1\n  number\t2\n"
     assert repr(expression_tree).startswith("Tree('sum', [Tree('number'")
     assert expression_tree == deepcopy(expression_tree)
@@ -67,7 +77,7 @@ def test_tree_display_and_equality(expression_tree):
     assert expression_tree.__lark_meta__() is expression_tree.meta
 
 
-def test_tree_traversal_search_and_inlining(expression_tree):
+def test_tree_traversal_search_and_inlining(expression_tree: Tree):
     left, right = expression_tree.children
     assert list(expression_tree.iter_subtrees()) == [left, right, expression_tree]
     assert list(expression_tree.iter_subtrees_topdown()) == [
@@ -98,7 +108,7 @@ def test_shared_subtrees_are_visited_once():
     assert nodes[1] is tree
 
 
-def test_tree_copy_and_replacement(expression_tree):
+def test_tree_copy_and_replacement(expression_tree: Tree):
     shallow = expression_tree.copy()
     deep = deepcopy(expression_tree)
     assert shallow.children is expression_tree.children

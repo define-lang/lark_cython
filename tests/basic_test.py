@@ -9,8 +9,11 @@ def test_minimal():
     parser = Lark('!start: "a" "b"', parser="lalr", _plugins=lark_cython.plugins)
     res = parser.parse("ab")
     assert isinstance(res, Tree)
-    assert all(isinstance(t, lark_cython.Token) for t in res.children)
-    assert [t.value for t in res.children] == ["a", "b"]
+    values: list[str] = []
+    for token in res.children:
+        assert isinstance(token, lark_cython.Token)
+        values.append(token.value)
+    assert values == ["a", "b"]
 
 
 def test_lark_meta_propagation():
@@ -35,7 +38,10 @@ def test_lark_meta_propagation():
 		4 5 6
 		"""
     )
-    tokens = res.children
+    tokens: list[lark_cython.Token] = []
+    for token in res.children:
+        assert isinstance(token, lark_cython.Token)
+        tokens.append(token)
     assert isinstance(res, Tree)
     assert res.meta.line == 2
     assert all(isinstance(t, lark_cython.Token) for t in tokens)
@@ -75,11 +81,11 @@ def test_no_placeholders():
 def test_start():
     parser = Lark('!x: "a" "b"', parser="lalr", _plugins=lark_cython.plugins, start="x")
     res = parser.parse("ab")
-    assert [t.value for t in res.children] == ["a", "b"]
+    assert [str(t) for t in res.children] == ["a", "b"]
 
 
 def test_lexer_callbacks():
-    comments = []
+    comments: list[lark_cython.Token] = []
 
     parser = Lark(
         """

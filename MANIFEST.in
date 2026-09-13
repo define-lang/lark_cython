@@ -1,3 +1,5 @@
 include lark_cython/*.py*
+include lark_cython/py.typed
 include tests/*.py
 include examples/*.py
+recursive-include typings *.pyi py.typed

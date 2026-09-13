@@ -20,14 +20,16 @@ from lark_cython.lark_cython import BasicLexer, Scanner
         ([TerminalDef("WORD", PatternRE("[a-z]+"))], ["MISSING"], "Ignore terminals"),
     ],
 )
-def test_invalid_lexer_definitions(terminals, ignored, message):
+def test_invalid_lexer_definitions(
+    terminals: list[TerminalDef], ignored: list[str], message: str
+):
     conf = LexerConf(terminals, re, ignored)
     with pytest.raises(LexError, match=message):
         BasicLexer(conf)
 
 
 @pytest.mark.parametrize("whole", [True, False])
-def test_scanner_whole_match_and_multiple_terminal_groups(whole):
+def test_scanner_whole_match_and_multiple_terminal_groups(*, whole: bool):
     terminals = [
         TerminalDef("WORD", PatternRE("[a-z]+")),
         TerminalDef("NUMBER", PatternRE("[0-9]+")),
@@ -41,9 +43,9 @@ def test_scanner_whole_match_and_multiple_terminal_groups(whole):
 
 
 def test_keyword_callback_chain_does_not_transform_other_token_types():
-    seen = []
+    seen: list[str] = []
 
-    def remember(word):
+    def remember(word: Token) -> Token:
         seen.append(word.value)
         return word.update(value=word.value.upper())
 
@@ -69,7 +71,7 @@ def test_empty_grammar_reports_end_of_file_as_expected():
 
 
 def test_multiline_ignored_tokens_update_following_positions():
-    ignored = []
+    ignored: list[Token] = []
     parser = Lark(
         "start: WORD WORD\nCOMMENT: /#[^!]*!/\n%import common.WORD\n%ignore COMMENT",
         parser="lalr",
@@ -77,8 +79,10 @@ def test_multiline_ignored_tokens_update_following_positions():
         lexer_callbacks={"COMMENT": ignored.append},
     )
     result = parser.parse("one# first\nsecond!two")
-    assert result.children[1].line == 2
-    assert result.children[1].column == 8
+    token = result.children[1]
+    assert isinstance(token, Token)
+    assert token.line == 2
+    assert token.column == 8
     assert ignored[0].value == "# first\nsecond!"
 
 

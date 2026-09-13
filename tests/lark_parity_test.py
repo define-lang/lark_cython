@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from lark import Lark, Transformer, Tree, UnexpectedInput, v_args
@@ -8,8 +9,11 @@ from lark.lexer import Token as PythonToken
 
 from lark_cython import Token, plugins
 
+if TYPE_CHECKING:
+    from lark_cython.lark_cython import Meta
 
-def observable(value):
+
+def observable(value: object) -> object:
     """Normalize only the documented native-token versus str-subclass difference."""
     if isinstance(value, (Token, PythonToken)):
         return (
@@ -23,20 +27,22 @@ def observable(value):
             value.end_column,
         )
     if isinstance(value, Tree):
+        value = cast("Tree[object]", value)
+        meta = cast("Meta", value.meta)
         location = (
             None
-            if value.meta.empty
+            if meta.empty
             else (
-                value.meta.start_pos,
-                value.meta.line,
-                value.meta.column,
-                value.meta.end_pos,
-                value.meta.end_line,
-                value.meta.end_column,
-                value.meta.container_line,
-                value.meta.container_column,
-                value.meta.container_end_line,
-                value.meta.container_end_column,
+                meta.start_pos,
+                meta.line,
+                meta.column,
+                meta.end_pos,
+                meta.end_line,
+                meta.end_column,
+                meta.container_line,
+                meta.container_column,
+                meta.container_end_line,
+                meta.container_end_column,
             )
         )
         return (
@@ -45,7 +51,7 @@ def observable(value):
             location,
         )
     if isinstance(value, list):
-        return [observable(child) for child in value]
+        return [observable(child) for child in cast("list[object]", value)]
     return value
 
 
@@ -75,24 +81,33 @@ CASES = [
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
 @pytest.mark.parametrize("placeholders", [True, False])
 @pytest.mark.parametrize(("grammar", "text"), CASES)
-def test_parse_tree_and_location_parity(grammar, text, lexer, placeholders):
-    options = {
-        "parser": "lalr",
-        "lexer": lexer,
-        "maybe_placeholders": placeholders,
-        "propagate_positions": True,
-    }
-    standard = Lark(grammar, **options)
-    native = Lark(grammar, **options, _plugins=plugins)
+def test_parse_tree_and_location_parity(
+    grammar: str,
+    text: str,
+    lexer: Literal["basic", "contextual"],
+    *,
+    placeholders: bool,
+):
+    standard, native = (
+        Lark(
+            grammar,
+            parser="lalr",
+            lexer=lexer,
+            maybe_placeholders=placeholders,
+            propagate_positions=True,
+            _plugins=implementation,
+        )
+        for implementation in (dict[str, object](), plugins)
+    )
     assert observable(native.parse(text)) == observable(standard.parse(text))
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
 @pytest.mark.parametrize("text", ["?", "(12?", "(12(", "(12", "", "(12))"])
-def test_diagnostic_parity(lexer, text):
+def test_diagnostic_parity(lexer: Literal["basic", "contextual"], text: str):
     grammar = 'start: "(" INT ")"\n%import common.INT'
-    errors = []
-    for implementation in ({}, plugins):
+    errors: list[object] = []
+    for implementation in (dict[str, object](), plugins):
         parser = Lark(grammar, parser="lalr", lexer=lexer, _plugins=implementation)
         with pytest.raises(UnexpectedInput) as raised:
             parser.parse(text)
@@ -114,14 +129,14 @@ def test_diagnostic_parity(lexer, text):
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_interactive_choices_and_progress_parity(lexer):
+def test_interactive_choices_and_progress_parity(lexer: Literal["basic", "contextual"]):
     grammar = 'start: INT "+" INT\n%import common.INT'
-    observations = []
-    for implementation in ({}, plugins):
+    observations: list[object] = []
+    for implementation in (dict[str, object](), plugins):
         cursor = Lark(
             grammar, parser="lalr", lexer=lexer, _plugins=implementation
         ).parse_interactive("12+34")
-        accepted = [cursor.accepts()]
+        accepted: list[str | set[str]] = [cursor.accepts()]
         for word in cursor.iter_parse():
             assert word.type in cursor.accepts()
             accepted.append(word.type)
@@ -131,14 +146,14 @@ def test_interactive_choices_and_progress_parity(lexer):
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])
-def test_transformer_and_error_recovery_parity(lexer):
+def test_transformer_and_error_recovery_parity(lexer: Literal["basic", "contextual"]):
     @v_args(inline=True)
-    class Add(Transformer):
-        def start(self, left, right):
+    class Add(Transformer[Token | PythonToken, int]):
+        def start(self, left: Token | PythonToken, right: Token | PythonToken) -> int:
             return int(left.value) + int(right.value)
 
-    results = []
-    for implementation in ({}, plugins):
+    results: list[object] = []
+    for implementation in (dict[str, object](), plugins):
         parser = Lark(
             'start: INT "+" INT\n%import common.INT',
             parser="lalr",
@@ -151,8 +166,8 @@ def test_transformer_and_error_recovery_parity(lexer):
 
 
 def test_serialized_parser_parity():
-    results = []
-    for implementation in ({}, plugins):
+    results: list[object] = []
+    for implementation in (dict[str, object](), plugins):
         parser = Lark(
             'start: INT+\n%import common.INT\n%ignore " "',
             parser="lalr",

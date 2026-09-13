@@ -19,14 +19,14 @@ def test_json_example():
         }
     """
 
-    example = runpy.run_path(Path(__file__).parents[1] / "examples/json_parser.py")
+    example = runpy.run_path(str(Path(__file__).parents[1] / "examples/json_parser.py"))
     j = example["parse"](test_json)
 
     assert j == json.loads(test_json)
 
 
 def test_calculator_example():
-    example = runpy.run_path(Path(__file__).parents[1] / "examples/calc.py")
+    example = runpy.run_path(str(Path(__file__).parents[1] / "examples/calc.py"))
     assert example["calc"]("a = 1+2") == 3
     assert example["calc"]("1+a*-3") == -8
 
@@ -34,7 +34,7 @@ def test_calculator_example():
 def test_calculator_operators_and_unknown_variable():
     import pytest
 
-    example = runpy.run_path(Path(__file__).parents[1] / "examples/calc.py")
+    example = runpy.run_path(str(Path(__file__).parents[1] / "examples/calc.py"))
     assert example["calc"]("(8-2)/3") == 2
     assert example["calc"]("-3*2") == -6
     with pytest.raises(NameError, match="Variable not found: missing"):
@@ -44,7 +44,7 @@ def test_calculator_operators_and_unknown_variable():
 @pytest.mark.parametrize(
     ("input_text", "output"), [("a=8\na/2\n", "> 8.0\n> 4.0\n> "), ("", "> ")]
 )
-def test_calculator_command_line(input_text, output):
+def test_calculator_command_line(input_text: str, output: str):
     import subprocess
     import sys
 
@@ -60,7 +60,7 @@ def test_calculator_command_line(input_text, output):
     assert result.stderr == ""
 
 
-def test_json_command_line(tmp_path):
+def test_json_command_line(tmp_path: Path):
     import ast
     import subprocess
     import sys
@@ -80,7 +80,7 @@ def test_json_command_line(tmp_path):
 
 
 def test_json_escaped_strings_match_standard_library():
-    example = runpy.run_path(Path(__file__).parents[1] / "examples/json_parser.py")
+    example = runpy.run_path(str(Path(__file__).parents[1] / "examples/json_parser.py"))
     data = {
         "newline": "a\nb",
         "tab": "a\tb",

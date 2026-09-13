@@ -16,10 +16,18 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 from lark import Lark, Transformer, v_args
 
 import lark_cython
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+JsonValue: TypeAlias = (
+    str | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
+)
 
 json_grammar = r"""
     ?start: value
@@ -46,16 +54,16 @@ json_grammar = r"""
 """
 
 
-class TreeToJson(Transformer):
+class TreeToJson(Transformer[lark_cython.Token, JsonValue]):
     """Convert JSON grammar nodes into Python values."""
 
     @v_args(inline=True)
-    def string(self, s):
+    def string(self, s: lark_cython.Token) -> str:
         """Extract the value of a quoted string token."""
         return json.loads(s.value)
 
     @v_args(inline=True)
-    def number(self, n):
+    def number(self, n: lark_cython.Token) -> float:
         """Convert a JSON number token to a float."""
         return float(n.value)
 
@@ -63,15 +71,15 @@ class TreeToJson(Transformer):
     pair = tuple
     object = dict
 
-    def null(self, _children):
+    def null(self, _children: list[object]) -> None:
         """Return the JSON null value."""
         return
 
-    def true(self, _children):
+    def true(self, _children: list[object]) -> bool:
         """Return the JSON true value."""
         return True
 
-    def false(self, _children):
+    def false(self, _children: list[object]) -> bool:
         """Return the JSON false value."""
         return False
 
@@ -91,7 +99,7 @@ json_parser = Lark(
     # Using an internal transformer is faster and more memory efficient
     transformer=TreeToJson(),
 )
-parse = json_parser.parse
+parse = cast("Callable[[str], JsonValue]", json_parser.parse)
 
 
 if __name__ == "__main__":

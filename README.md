@@ -66,7 +66,17 @@ uv sync --locked
 uv run pre-commit install
 uv run pre-commit run --all-files
 uv run pytest
+uv run basedpyright
 ```
+
+Basedpyright checks all Python source and stubs in strict mode, including tests,
+examples, benchmarks, and the build script. It runs through pre-commit and CI.
+Cython checks the `.pyx` implementation; `lark_cython.pyi` describes the compiled
+extension for Python type checkers and ships with the `py.typed` marker.
+Lark's existing types are reused where applicable. Local development stubs in
+`typings` fill gaps in dependency annotations; they are not shipped in the wheel.
+The generated standalone module uses `Any` because it supplies dynamically
+defined classes, including a base class. Tests rely on inferred return types.
 
 Ruff lints and formats Python files. For `.pyx` files, pre-commit runs autopep8
 whitespace formatting, string quote normalization, and `cython-lint`. Long Cython

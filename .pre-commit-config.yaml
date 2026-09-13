@@ -18,16 +18,22 @@ repos:
       - id: trailing-whitespace
   - repo: local
     hooks:
+      - id: basedpyright
+        name: Basedpyright strict type checking
+        entry: uv run --locked basedpyright
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: ruff-check
         name: Ruff lint
         entry: uv run --locked ruff check --fix
         language: system
-        types: [python]
+        types_or: [python, pyi]
       - id: ruff-format
         name: Ruff format
         entry: uv run --locked ruff format
         language: system
-        types: [python]
+        types_or: [python, pyi]
       - id: cython-whitespace
         name: Cython whitespace formatting
         entry: uv run --locked autopep8 --in-place

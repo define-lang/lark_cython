@@ -7,13 +7,22 @@ import json
 import os
 from importlib.metadata import version
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pyperf
 from lark import Lark, Transformer, Tree
+from lark.lexer import Lexer as PythonLexer
 from lark.lexer import LexerThread
+from lark.lexer import Token as PythonToken
 
-from lark_cython import plugins
+from lark_cython import Token, plugins
 from lark_cython.lark_cython import BasicLexer
+
+if TYPE_CHECKING:
+    from argparse import Namespace
+    from collections.abc import Callable, Iterator
+
+    from lark.tree import Branch, Meta
 
 JSON_GRAMMAR = r"""
 ?start: value
@@ -60,42 +69,47 @@ WORKLOADS = {
 }
 
 
-class CountNodes(Transformer):
+class CountNodes(Transformer[object, int | Tree[object]]):
     """Reduce user rules to counts, preserving generated repetition containers."""
 
-    def __default__(self, data, children, meta):
+    def __default__(
+        self, data: str, children: list[Branch[object]], meta: Meta | None
+    ) -> int | Tree[object]:
         """Count reductions and terminal leaves."""
         if str(data).startswith("__"):
             return Tree(data, children, meta)
         return 1 + sum(child if isinstance(child, int) else 1 for child in children)
 
 
-def observable(value):
+def observable(value: object) -> object:
     """Compare tree contents while allowing the documented token type difference."""
     if isinstance(value, Tree):
+        value = cast("Tree[object]", value)
         return str(value.data), [observable(child) for child in value.children]
-    if hasattr(value, "type"):
+    if isinstance(value, (Token, PythonToken)):
         return value.type, value.value, value.start_pos, value.end_pos
     return value
 
 
-def lex_all(parser, source):
+def lex_all(parser: Lark, source: str) -> list[Token | PythonToken]:
     """Materialize all basic-lexer tokens, including Python iteration overhead."""
-    lexer = parser.parser.lexer
-    thread = (
-        lexer.make_lexer_thread(source)
-        if isinstance(lexer, BasicLexer)
-        else LexerThread.from_text(lexer, source)
-    )
-    return list(thread.lex(None))
+    # The frontend stores either the installed lexer or the native plugin.
+    lexer = cast("BasicLexer | PythonLexer", parser.parser.lexer)
+    if isinstance(lexer, BasicLexer):
+        return list(lexer.make_lexer_thread(source).lex(None))
+    # Lark leaves these two methods partially annotated.
+    from_text = cast("Callable[[PythonLexer, str], LexerThread]", LexerThread.from_text)
+    thread = from_text(lexer, source)
+    lex = cast("Callable[[None], Iterator[PythonToken]]", thread.lex)
+    return list(lex(None))
 
 
-def worker_args(command, args):
+def worker_args(command: list[str], args: Namespace) -> None:
     """Preserve backend selection in pyperf worker processes."""
     command.extend(("--backend", args.backend))
 
 
-def main():
+def main() -> None:
     """Validate parity outside timing, then run isolated pyperf workers."""
     if os.environ.get("LARK_CYTHON_COVERAGE"):
         raise RuntimeError("Rebuild without LARK_CYTHON_COVERAGE before benchmarking")
@@ -116,15 +130,14 @@ def main():
         ).hexdigest()
         for lexer in ("basic", "contextual"):
             for mode in ("tree", "reduce"):
-                parsers = {}
+                parsers: dict[str, Lark] = {}
                 for backend in ("python", "cython"):
-                    options = {"_plugins": plugins} if backend == "cython" else {}
                     parsers[backend] = Lark(
                         grammar,
                         parser="lalr",
                         lexer=lexer,
                         transformer=CountNodes() if mode == "reduce" else None,
-                        **options,
+                        _plugins=plugins if backend == "cython" else {},
                     )
                 if observable(parsers["python"].parse(source)) != observable(
                     parsers["cython"].parse(source)

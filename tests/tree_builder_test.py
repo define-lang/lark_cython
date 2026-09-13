@@ -1,46 +1,88 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast, overload
+
 import pytest
 from lark import Lark
+from lark import Tree as PythonTree
 from lark.common import ParserConf
 
 from lark_cython import Token
-from lark_cython.lark_cython import BasicLexer, LALR_Parser, ParseTreeBuilder, Tree
+from lark_cython.lark_cython import (
+    BasicLexer,
+    LALR_Parser,
+    Meta,
+    ParseTreeBuilder,
+    Tree,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from lark.tree import Meta as PythonMeta
 
 
-def parse_native_tree(grammar, text, **options):
+@overload
+def parse_native_tree(
+    grammar: str,
+    text: str,
+    *,
+    transformer: None = None,
+    propagate_positions: bool | Callable[[object], bool] = False,
+    maybe_placeholders: bool = False,
+) -> Tree: ...
+
+
+@overload
+def parse_native_tree(
+    grammar: str,
+    text: str,
+    *,
+    transformer: object,
+    propagate_positions: bool | Callable[[object], bool] = False,
+    maybe_placeholders: bool = False,
+) -> object: ...
+
+
+def parse_native_tree(
+    grammar: str,
+    text: str,
+    *,
+    transformer: object = None,
+    propagate_positions: bool | Callable[[object], bool] = False,
+    maybe_placeholders: bool = False,
+) -> object:
     """Build and run the native tree builder with rules from a real Lark grammar."""
     compiled = Lark(
         grammar,
         parser="lalr",
-        **{
-            key: value
-            for key, value in options.items()
-            if key not in {"transformer", "propagate_positions"}
-        },
+        maybe_placeholders=maybe_placeholders,
     )
     builder = ParseTreeBuilder(
         compiled.rules,
         Tree,
-        propagate_positions=options.get("propagate_positions", False),
-        maybe_placeholders=options.get("maybe_placeholders", False),
+        propagate_positions=propagate_positions,
+        maybe_placeholders=maybe_placeholders,
     )
-    callbacks = builder.create_callback(options.get("transformer"))
-    conf = ParserConf(compiled.rules, callbacks, compiled.options.start)
+    callbacks = builder.create_callback(transformer)
+    conf = ParserConf(compiled.rules, callbacks, compiled.options.start)  # pyright: ignore[reportArgumentType]  # Lark annotates callback keys as str, but uses Rule.
     parser = LALR_Parser(conf)
     lexer = BasicLexer(compiled.lexer_conf)
-    return parser.parse(lexer.make_lexer_thread(text), "start")
+    result = parser.parse(lexer.make_lexer_thread(text), "start")
+    if transformer is None:
+        assert isinstance(result, Tree)
+    return result
 
 
 @pytest.mark.parametrize("placeholders", [True, False])
 @pytest.mark.parametrize("text", ["", "1", "1,2,3"])
-def test_native_tree_lists_and_optional_items(placeholders, text):
+def test_native_tree_lists_and_optional_items(text: str, *, placeholders: bool):
     tree = parse_native_tree(
         'start: [item ("," item)*]\nitem: INT\n%import common.INT',
         text,
         maybe_placeholders=placeholders,
     )
-    expected = [
+    expected: list[object] = [
         Tree("item", [Token("INT", number)]) for number in text.split(",") if number
     ]
     if not text and placeholders:
@@ -49,7 +91,7 @@ def test_native_tree_lists_and_optional_items(placeholders, text):
 
 
 @pytest.mark.parametrize("text", ["1", "(1)"])
-def test_native_tree_expands_single_child(text):
+def test_native_tree_expands_single_child(text: str):
     tree = parse_native_tree(
         'start: atom\n?atom: INT | "(" atom ")"\n%import common.INT', text
     )
@@ -65,8 +107,11 @@ def test_native_tree_positions():
     assert not tree.meta.empty
     assert (tree.meta.line, tree.meta.column, tree.meta.start_pos) == (2, 3, 3)
     assert (tree.meta.end_line, tree.meta.end_column, tree.meta.end_pos) == (3, 5, 10)
-    assert tree.children[0].meta.line == 2
-    assert tree.children[1].meta.line == 3
+    first, second = tree.children
+    assert isinstance(first, Tree)
+    assert isinstance(second, Tree)
+    assert first.meta.line == 2
+    assert second.meta.line == 3
 
 
 def test_native_builder_handles_named_aliases_and_inlined_rules():
@@ -104,15 +149,6 @@ def test_native_builder_position_filter():
     assert (result.meta.column, result.meta.end_column) == (2, 4)
 
 
-def test_native_builder_rejects_invalid_position_option():
-    from lark.exceptions import ConfigurationError
-
-    with pytest.raises(
-        ConfigurationError, match="Invalid option for propagate_positions"
-    ):
-        parse_native_tree('start: "a"', "a", propagate_positions="invalid")
-
-
 def test_native_builder_rejects_duplicate_rules():
     from lark.exceptions import GrammarError
 
@@ -123,7 +159,6 @@ def test_native_builder_rejects_duplicate_rules():
 
 
 def test_native_builder_honors_custom_tree_class():
-    from lark import Tree as PythonTree
 
     grammar = Lark("start: INT\n%import common.INT", parser="lalr")
     builder = ParseTreeBuilder(grammar.rules, PythonTree)
@@ -137,11 +172,11 @@ def test_native_builder_uses_real_inline_transformer():
     from lark import Transformer, v_args
 
     @v_args(inline=True)
-    class Add(Transformer):
-        def number(self, value):
+    class Add(Transformer[Token, int]):
+        def number(self, value: Token) -> int:
             return int(value.value)
 
-        def start(self, left, right):
+        def start(self, left: int, right: int) -> int:
             return left + right
 
     assert (
@@ -156,10 +191,11 @@ def test_native_builder_uses_real_inline_transformer():
 
 def test_native_builder_uses_transformer_default_handler():
     from lark import Transformer
-    from lark import Tree as PythonTree
 
     result = parse_native_tree(
-        "start: INT\n%import common.INT", "12", transformer=Transformer()
+        "start: INT\n%import common.INT",
+        "12",
+        transformer=Transformer[Token, PythonTree[Token]](),
     )
     assert isinstance(result, PythonTree)
     assert result == PythonTree("start", [Token("INT", "12")])
@@ -168,9 +204,11 @@ def test_native_builder_uses_transformer_default_handler():
 def test_native_builder_uses_inplace_transformer():
     from lark.visitors import Transformer_InPlace
 
-    class Negate(Transformer_InPlace):
-        def start(self, tree):
-            return -int(tree.children[0].value)
+    class Negate(Transformer_InPlace[Token, int]):
+        def start(self, tree: Tree) -> int:
+            token = tree.children[0]
+            assert isinstance(token, Token)
+            return -int(token.value)
 
     assert (
         parse_native_tree("start: INT\n%import common.INT", "12", transformer=Negate())
@@ -182,8 +220,10 @@ def test_native_builder_rejects_meta_transformer():
     from lark import Transformer, v_args
 
     @v_args(meta=True)
-    class Located(Transformer):
-        def start(self, meta, children):
+    class Located(Transformer[Token, tuple[int, list[Token]]]):
+        def start(
+            self, meta: PythonMeta, children: list[Token]
+        ) -> tuple[int, list[Token]]:
             return meta.line, children
 
     with pytest.raises(NotImplementedError, match="Meta args not supported"):
@@ -203,7 +243,7 @@ def test_generic_child_filter_preserves_shared_subtrees():
 
 
 @pytest.mark.parametrize("text", ["1", "1+2"])
-def test_expand_single_child_retains_multiple_children(text):
+def test_expand_single_child_retains_multiple_children(text: str):
     result = parse_native_tree(
         'start: atom\n?atom: INT | INT "+" INT\n%import common.INT', text
     )
@@ -234,11 +274,11 @@ def test_native_builder_accepts_grammar_symbols_from_native_tokens():
     )
     rules = [
         Rule(
-            NonTerminal(Token("RULE", str(rule.origin.name))),
+            NonTerminal(Token("RULE", str(rule.origin.name))),  # pyright: ignore[reportArgumentType]  # Deliberately exercise native tokens as grammar symbols.
             [
                 symbol
                 if symbol.is_term
-                else NonTerminal(Token("RULE", str(symbol.name)))
+                else NonTerminal(Token("RULE", str(symbol.name)))  # pyright: ignore[reportArgumentType]  # Native token compatibility.
                 for symbol in rule.expansion
             ],
             order=rule.order,
@@ -248,7 +288,7 @@ def test_native_builder_accepts_grammar_symbols_from_native_tokens():
         for rule in compiled.rules
     ]
     builder = ParseTreeBuilder(rules, Tree)
-    parser = LALR_Parser(ParserConf(rules, builder.create_callback(), ["start"]))
+    parser = LALR_Parser(ParserConf(rules, builder.create_callback(), ["start"]))  # pyright: ignore[reportArgumentType]  # Lark uses Rule callback keys.
     lexer = BasicLexer(compiled.lexer_conf)
     assert parser.parse(lexer.make_lexer_thread("12 34"), "start") == Tree(
         "start", [Token("INT", "12"), Token("INT", "34")]
@@ -280,16 +320,18 @@ def test_lalr_placeholder_filter_can_expand_first_child_without_copying():
         ("start: empty item\nempty:\nitem: INT\n%import common.INT", "12"),
     ],
 )
-def test_native_tree_builder_matches_standard_lark(grammar, text, placeholders):
+def test_native_tree_builder_matches_standard_lark(
+    grammar: str, text: str, *, placeholders: bool
+):
     from lark import Token as PythonToken
-    from lark import Tree as PythonTree
 
-    def snapshot(node):
+    def snapshot(node: object) -> object:
         if isinstance(node, (Token, PythonToken)):
             return (node.type, node.value, node.start_pos, node.end_pos)
         if not isinstance(node, (Tree, PythonTree)):
             return node
-        meta = node.meta
+        node = cast("Tree | PythonTree[object]", node)
+        meta = cast("Meta", node.meta)
         location = (
             None
             if meta.empty

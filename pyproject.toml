@@ -30,6 +30,19 @@ Upstream = "https://github.com/lark-parser/lark_cython"
 [tool.setuptools.packages.find]
 include = ["lark_cython*"]
 
+[tool.setuptools.package-data]
+lark_cython = ["*.pyi", "py.typed"]
+
+[tool.basedpyright]
+include = ["."]
+exclude = ["**/.*", "build", "dist"]
+typeCheckingMode = "strict"
+reportUnnecessaryTypeIgnoreComment = "error"
+stubPath = "typings"
+pythonVersion = "3.10"
+venvPath = "."
+venv = ".venv"
+
 [tool.setuptools.dynamic]
 version = {attr = "lark_cython.__version__"}
 
@@ -40,6 +53,7 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "autopep8>=2.3.2",
+    "basedpyright>=1.40.1",
     "cython>=3.3.0,<3.4",
     "cython-lint>=0.21.1",
     "pre-commit>=4.6.2",
@@ -99,6 +113,9 @@ required-imports = ["from __future__ import annotations"]
     "D102", # Don't require docstrings on test methods.
     "D103", # Don't require docstrings on test functions.
 ]
+"typings/lark-stubs/*.pyi" = [
+    "N818", # Preserve Lark's exception class names.
+]
 [tool.ruff]
 target-version = "py310"
 force-exclude = true
@@ -130,5 +147,7 @@ cache-keys = [
     {file = "MANIFEST.in"},
     {file = "lark_cython/*.py"},
     {file = "lark_cython/*.pyx"},
+    {file = "lark_cython/*.pyi"},
+    {file = "lark_cython/py.typed"},
     {env = "LARK_CYTHON_COVERAGE"},
 ]
