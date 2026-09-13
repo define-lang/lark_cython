@@ -1,5 +1,8 @@
 # Parser benchmarks
 
+See [native parser optimization measurements](optimization_results.md) for a
+dated before/after study using these workloads and Define's full AST parser.
+
 Run from the repository root with the locked development environment. Always
 rebuild without coverage instrumentation first:
 

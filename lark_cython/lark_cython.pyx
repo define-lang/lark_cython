@@ -8,6 +8,7 @@ from lark.parsers.lalr_interactive_parser import (
 from lark.parsers.lalr_analysis import LALR_Analyzer, Shift, IntParseTable
 from lark.utils import Serialize
 import cython
+from cpython.list cimport PyList_SetSlice
 from threading import RLock
 from types import SimpleNamespace
 
@@ -191,7 +192,7 @@ cdef class Scanner:
     cdef public use_bytes
     cdef public match_whole
     cdef public allowed_types
-    cdef list _mres
+    cdef list _matchers
 
     def __cinit__(self, terminals, g_regex_flags, re_, use_bytes, match_whole=False):
         self.terminals = terminals
@@ -202,7 +203,10 @@ cdef class Scanner:
 
         self.allowed_types = {t.name for t in self.terminals}
 
-        self._mres = self._build_mres(terminals, len(terminals))
+        self._matchers = [
+            mre.match
+            for mre in self._build_mres(terminals, len(terminals))
+        ]
 
     def _build_mres(self, terminals, max_size):
         postfix = "$" if self.match_whole else ""
@@ -214,15 +218,15 @@ cdef class Scanner:
                 pattern = pattern.encode("latin-1")
             mre = self.re_.compile(pattern, self.g_regex_flags)
 
-            mres.append((mre, {i: n for n, i in mre.groupindex.items()}))
+            mres.append(mre)
             terminals = terminals[max_size:]
         return mres
 
     cpdef public match(self, text, pos: int):
-        for mre, type_from_index in self._mres:
-            m = mre.match(text, pos)
+        for match in self._matchers:
+            m = match(text, pos)
             if m:
-                return m.group(0), type_from_index[m.lastindex]
+                return m[0], m.lastgroup
 
 
 cdef class Lexer:
@@ -242,6 +246,9 @@ cdef class Lexer:
 
     cpdef make_lexer_thread(self, str text):
         return LexerThread.from_text(self, text)
+
+    cpdef next_token(self, LexerState lexer_state, ParserState parser_state):
+        raise NotImplementedError()
 
 cdef class BasicLexer(Lexer):
 
@@ -447,7 +454,7 @@ cdef class ContextualLexer(Lexer):
         cdef Token last_token
         cdef Token token
         try:
-            lexer = self.lexers[parser_state.position]
+            lexer = self.lexers[parser_state.state_stack[-1]]
             return lexer.next_token(lexer_state, parser_state)
         except self._runtime.UnexpectedCharacters as e:
             # The terminal may be defined, but not in the current context.
@@ -487,7 +494,7 @@ cdef class LexerThread:
     def from_text(cls, lexer, text):
         return cls(lexer, lexer.make_lexer_state(text))
 
-    def next_token(self, ParserState parser_state):
+    cpdef next_token(self, ParserState parser_state):
         return self.lexer.next_token(self.state, parser_state)
 
     def __copy__(self):
@@ -501,6 +508,38 @@ cdef class LexerThread:
 ####
 
 
+cdef class _Reduction:
+    cdef int size
+    cdef object name, rule
+
+    def __init__(self, rule):
+        self.size = len(rule.expansion)
+        self.name = rule.origin.name
+        self.rule = rule
+
+
+cdef class _CompiledGrammar:
+    """Own the source table and execution tables; keep callbacks live like Lark."""
+    cdef object parse_table
+    cdef dict callbacks
+    cdef list states
+
+    def __init__(self, parse_table, callbacks):
+        self.parse_table = parse_table
+        self.callbacks = callbacks
+        reductions = {}
+        self.states = [None] * len(parse_table.states)
+        for state, actions in parse_table.states.items():
+            compiled = {}
+            for name, (action, arg) in actions.items():
+                if action is not Shift:
+                    if arg not in reductions:
+                        reductions[arg] = _Reduction(arg)
+                    arg = reductions[arg]
+                compiled[name] = arg
+            self.states[state] = compiled
+
+
 cdef class ParseConf:
     __slots__ = (
         "parse_table", "callbacks", "start_state", "end_state",
@@ -510,21 +549,23 @@ cdef class ParseConf:
     cdef public object _runtime
     cdef public int start_state, end_state
     cdef public dict callbacks
+    cdef _CompiledGrammar _grammar
 
-    def __init__(self, parse_table, callbacks, start, runtime):
+    def __init__(self, _CompiledGrammar grammar, start, runtime):
         self._runtime = runtime
-        self.parse_table = parse_table
-        self.start_state = parse_table.start_states[start]
-        self.end_state = parse_table.end_states[start]
+        self._grammar = grammar
+        self.parse_table = grammar.parse_table
+        self.start_state = self.parse_table.start_states[start]
+        self.end_state = self.parse_table.end_states[start]
 
-        self.callbacks = callbacks
+        self.callbacks = grammar.callbacks
 
 
 cdef class ParserState:
     __slots__ = "parse_conf", "lexer", "state_stack", "value_stack"
 
     cdef public ParseConf parse_conf
-    cdef public object lexer   # LexerThread
+    cdef public LexerThread lexer
     cdef public list value_stack, state_stack
 
     def __init__(self, parse_conf, lexer, state_stack=None, value_stack=None):
@@ -568,29 +609,31 @@ cdef class ParserState:
         cdef:
             list state_stack = self.state_stack
             list value_stack = self.value_stack
-            dict states = self.parse_conf.parse_table.states
+            list states = self.parse_conf._grammar.states
+            dict row
             int end_state = self.parse_conf.end_state
             dict callbacks = self.parse_conf.callbacks
 
-            int state, new_state
-            object action, _action
+            int state
+            object new_state
             object arg
             int size
             list s
             object value
-            object rule
+            _Reduction reduction
 
         while True:
             state = state_stack[-1]
+            row = states[state]
             try:
-                action, arg = states[state][token.type]
+                arg = row[token.type]
             except KeyError:
                 # expected = {s for s in states[state].keys() if s.isupper()}
-                expected = set(filter(str.isupper, states[state].keys()))
+                expected = set(filter(str.isupper, row))
                 raise self.parse_conf._runtime.UnexpectedToken(
                     token, expected, state=self, interactive_parser=None)
 
-            if action is Shift:
+            if not isinstance(arg, _Reduction):
                 # shift once and return
                 assert not is_end
                 assert arg != end_state
@@ -602,19 +645,30 @@ cdef class ParserState:
                 return
             else:
                 # reduce+shift as many times as necessary
-                rule = arg
-                size = len(rule.expansion)
+                reduction = arg
+                size = reduction.size
                 if size:
                     s = value_stack[-size:]
-                    del state_stack[-size:]
-                    del value_stack[-size:]
+                    PyList_SetSlice(
+                        state_stack, len(state_stack) - size, len(state_stack),
+                        cython.cast(object, NULL),
+                    )
+                    PyList_SetSlice(
+                        value_stack, len(value_stack) - size, len(value_stack),
+                        cython.cast(object, NULL),
+                    )
                 else:
                     s = []
 
-                value = callbacks[rule](s) if callbacks else s
+                if not callbacks:
+                    # InteractiveParser.accepts() disables callbacks on a copied conf.
+                    value = s
+                else:
+                    value = callbacks[reduction.rule](s)
 
-                _action, new_state = states[state_stack[-1]][rule.origin.name]
-                assert _action is Shift
+                state = state_stack[-1]
+                row = states[state]
+                new_state = row[reduction.name]
                 state_stack.append(new_state)
                 value_stack.append(value)
 
@@ -631,21 +685,22 @@ class InteractiveParser(LarkInteractiveParser):
 
 
 cdef class _Parser:
-    cdef parse_table
-    cdef dict callbacks
+    cdef _CompiledGrammar _grammar
     cdef bint debug
 
     def __cinit__(self, parse_table, callbacks, debug=False):
-        self.parse_table = parse_table
-        self.callbacks = callbacks
         self.debug = debug
+        # Keep Lark's rule-based table for serialization and interactive choices.
+        self._grammar = _CompiledGrammar(parse_table, callbacks)
 
     def parse(
         self, LexerThread lexer, start, value_stack=None, state_stack=None,
         start_interactive=False,
     ):
         runtime = lexer.lexer._runtime
-        parse_conf = ParseConf(self.parse_table, self.callbacks, start, runtime)
+        parse_conf = ParseConf(
+            self._grammar, start, runtime,
+        )
         parser_state = ParserState(parse_conf, lexer, state_stack, value_stack)
         if start_interactive:
             return runtime.InteractiveParser(self, parser_state, parser_state.lexer)

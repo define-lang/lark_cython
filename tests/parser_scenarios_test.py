@@ -13,6 +13,7 @@ from lark import (
     UnexpectedInput,
     UnexpectedToken,
 )
+from lark.lexer import Token as PythonToken
 
 from lark_cython import Token, plugins
 
@@ -129,6 +130,50 @@ def test_interactive_copies_apply_transformer_independently(
 
 
 @pytest.mark.parametrize("implementation", ["python", "native"])
+def test_interactive_copy_can_replace_callbacks_without_changing_original(
+    implementation: Literal["python", "native"],
+):
+    parser = _make_lalr('start: "a"', None, implementation)
+    original = parser.parse_interactive("")
+    original.feed_token(PythonToken("A", "a"))
+    duplicate = original.copy()
+    configuration = copy(duplicate.parser_state.parse_conf)
+
+    def replacement(_children: list[object]) -> str:
+        return "replacement"
+
+    callbacks = cast("dict[str, object]", configuration.callbacks)
+    configuration.callbacks = dict.fromkeys(callbacks, replacement)
+    duplicate.parser_state.parse_conf = configuration
+
+    assert duplicate.feed_eof() == "replacement"
+    assert original.feed_eof() == Tree("start", [])
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
+@pytest.mark.parametrize("clear_first", [False, True])
+def test_interactive_callback_dictionary_updates_are_live(
+    implementation: Literal["python", "native"],
+    *,
+    clear_first: bool,
+):
+    parser = _make_lalr('start: "a"', None, implementation)
+    cursor = parser.parse_interactive("")
+    cursor.feed_token(PythonToken("A", "a"))
+    callbacks = cast("dict[str, object]", cursor.parser_state.parse_conf.callbacks)
+
+    def replacement(_children: list[object]) -> str:
+        return "replacement"
+
+    updated = dict.fromkeys(callbacks, replacement)
+    if clear_first:
+        callbacks.clear()
+    callbacks.update(updated)
+    assert cursor.feed_eof() == "replacement"
+    assert parser.parse("a") == "replacement"
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
 def test_recovery_cursor_applies_transformer_after_a_fed_token(
     implementation: Literal["python", "native"],
 ):
@@ -242,6 +287,35 @@ def test_save_and_load_parser(lexer: Literal["basic", "contextual"]):
     restored = Lark.load(stream)
     assert restored.parse("one two") == parser.parse("one two")
     assert all(isinstance(token, Token) for token in restored.parse("one two").children)
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
+def test_multiple_start_rules_share_nullable_reductions_after_loading(
+    implementation: Literal["python", "native"],
+):
+    parser = Lark(
+        "words: empty WORD+ empty\nnumbers: empty INT+ empty\nempty:\n"
+        '%import common.WORD\n%import common.INT\n%ignore " "',
+        parser="lalr",
+        start=["words", "numbers"],
+        _plugins=plugins if implementation == "native" else {},
+    )
+    stream = io.BytesIO()
+    parser.save(stream)
+    stream.seek(0)
+    restored = Lark.load(stream)
+    for current in (parser, restored):
+        for start, text, kind in (
+            ("words", "one two", "WORD"),
+            ("numbers", "12 34", "INT"),
+            ("words", "three", "WORD"),
+        ):
+            cursor = current.parse_interactive(text, start=start)
+            assert cursor.accepts() == {kind}
+            assert cursor.resume_parse() == current.parse(text, start=start)
+            assert (
+                len(current.parse(text, start=start).children) == len(text.split()) + 2
+            )
 
 
 def test_callback_transforms_words_without_changing_keywords():

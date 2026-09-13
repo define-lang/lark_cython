@@ -9,7 +9,7 @@ from lark.exceptions import LexError
 from lark.lexer import PatternRE, PatternStr, TerminalDef
 
 from lark_cython import Token, plugins
-from lark_cython.lark_cython import BasicLexer, Scanner
+from lark_cython.lark_cython import BasicLexer, LexerState, ParserState, Scanner
 
 
 @pytest.mark.parametrize(
@@ -40,6 +40,20 @@ def test_scanner_whole_match_and_multiple_terminal_groups(*, whole: bool):
     assert scanner.match("?", 0) is None
     assert scanner.match("hello!", 0) == (None if whole else ("hello", "WORD"))
     assert len(scanner._build_mres(terminals, 1)) == 2
+
+
+def test_scanner_uses_outer_terminal_group_with_nested_captures():
+    scanner = Scanner(
+        [
+            TerminalDef("WORD", PatternRE("(?P<inner>[a-z]+)([0-9]+)?")),
+            TerminalDef("NUMBER", PatternRE("([0-9]+)")),
+        ],
+        0,
+        re,
+        use_bytes=False,
+    )
+    assert scanner.match("!word12", 1) == ("word12", "WORD")
+    assert scanner.match("!123", 1) == ("123", "NUMBER")
 
 
 def test_keyword_callback_chain_does_not_transform_other_token_types():
@@ -75,6 +89,25 @@ def test_unhashable_basic_lexer_subclass_can_parse():
         _plugins=custom_plugins,
     )
     assert parser.parse("example") == Tree("start", [Token("WORD", "example")])
+
+
+def test_basic_lexer_subclass_can_override_token_dispatch():
+    class UppercaseLexer(BasicLexer):
+        def next_token(
+            self, lex_state: LexerState, parser_state: ParserState | None
+        ) -> Token:
+            token = super().next_token(lex_state, parser_state)
+            return token.update(value=token.value.upper())
+
+    parser = Lark(
+        'start: WORD+\n%import common.WORD\n%ignore " "',
+        parser="lalr",
+        lexer="basic",
+        _plugins={**plugins, "BasicLexer": UppercaseLexer},
+    )
+    assert parser.parse("one two") == Tree(
+        "start", [Token("WORD", "ONE"), Token("WORD", "TWO")]
+    )
 
 
 def test_empty_grammar_reports_end_of_file_as_expected():

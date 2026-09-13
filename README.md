@@ -45,6 +45,8 @@ need changes.
 ## Other caveats
 
 - Postlexer isn't currently implemented.
+- Grammar tables are compiled when a parser is built. Construct a new parser to
+  change the grammar. Callback dictionaries remain live, as in Lark.
 - Python 3.13t and 3.14t are supported. A parser can be shared across threads;
   keep each interactive parsing session in one thread, and synchronize any shared
   mutable state in your transformers or callbacks. Do not modify parser
