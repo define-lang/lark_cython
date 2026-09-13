@@ -19,6 +19,25 @@ parser = Lark(grammar, parser="lalr", _plugins=lark_cython.plugins)
 
 See the [examples](examples/) for complete JSON and calculator parsers.
 
+## Generated standalone parsers
+
+Bind the plugins to your generated parser module:
+
+```python
+import generated_parser
+from lark_cython import standalone_plugins
+
+parser = generated_parser.Lark_StandAlone(
+    _plugins=standalone_plugins(generated_parser),
+)
+```
+
+The parser uses native tokens and the generated module's trees and exception
+classes. Use `token.value` for string operations, as with the regular plugin.
+Generated tokens are also accepted as interactive input or callback results.
+The plugin requires the installed Lark package; the generated file does not
+need changes.
+
 ## Differences from Lark
 
 - `Token` instances do not inherit from `str`. You must use the `value` attribute to get the string.
