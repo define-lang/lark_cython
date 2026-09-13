@@ -43,6 +43,7 @@ dev = [
     "cython>=3.3.0,<3.4",
     "cython-lint>=0.21.1",
     "pre-commit>=4.6.2",
+    "pyperf>=2.10.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.7",
