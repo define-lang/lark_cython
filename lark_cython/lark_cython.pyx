@@ -141,7 +141,7 @@ cdef class Scanner:
     cdef public use_bytes
     cdef public match_whole
     cdef public allowed_types
-    cdef list _mres
+    cdef list _matchers
 
     def __cinit__(self, terminals, g_regex_flags, re_, use_bytes, match_whole=False):
         self.terminals = terminals
@@ -152,7 +152,7 @@ cdef class Scanner:
 
         self.allowed_types = {t.name for t in self.terminals}
 
-        self._mres = self._build_mres(terminals, len(terminals))
+        self._matchers = [mre.match for mre in self._build_mres(terminals, len(terminals))]
 
     def _build_mres(self, terminals, max_size):
         # Python sets an unreasonable group limit (currently 100) in its re module
@@ -169,15 +169,15 @@ cdef class Scanner:
             except AssertionError:  # Yes, this is what Python provides us.. :/
                 return self._build_mres(terminals, max_size//2)
 
-            mres.append((mre, {i: n for n, i in mre.groupindex.items()}))
+            mres.append(mre)
             terminals = terminals[max_size:]
         return mres
 
     cpdef public match(self, text: str, pos: int):
-        for mre, type_from_index in self._mres:
-            m = mre.match(text, pos)
+        for match in self._matchers:
+            m = match(text, pos)
             if m:
-                return m.group(0), type_from_index[m.lastindex]
+                return m[0], m.lastgroup
 
 
 cdef class Lexer:
