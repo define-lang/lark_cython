@@ -26,7 +26,10 @@ See the [examples](examples/) for complete JSON and calculator parsers.
 ## Other caveats
 
 - Postlexer isn't currently implemented.
-- The extension requires the GIL, including on free-threaded Python.
+- Python 3.13t and 3.14t are supported. A parser can be shared across threads;
+  keep each interactive parsing session in one thread, and synchronize any shared
+  mutable state in your transformers or callbacks. Do not modify parser
+  configuration or tokens while another thread uses them.
 
 ## Speed
 
@@ -50,7 +53,8 @@ Ruff lints and formats Python files. For `.pyx` files, pre-commit runs autopep8
 whitespace formatting, string quote normalization, and `cython-lint`. Long Cython
 declarations may need manual wrapping. Name test files `*_test.py`.
 
-CI tests Python 3.10–3.14 on Linux and runs the pre-commit hooks. Cross-platform
+CI tests Python 3.10–3.14, including 3.13t and 3.14t, on Linux and runs the
+pre-commit hooks. Cross-platform
 wheel builds can be triggered manually in GitHub Actions.
 
 ### Cython coverage

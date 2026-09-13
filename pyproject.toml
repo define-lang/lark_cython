@@ -51,7 +51,7 @@ dev = [
 
 
 [tool.cibuildwheel]
-build = "*p310-* *p311-* *p312-* *p313-* *p314-*"
+build = "*p310-* *p311-* *p312-* *p313-* *p314-* cp314t-*"
 build-frontend = "build"
 build-verbosity = 1
 test-requires = [ "pytest" ]

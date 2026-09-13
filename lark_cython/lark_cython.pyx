@@ -1,4 +1,4 @@
-# cython: language_level=3
+# cython: language_level=3, freethreading_compatible=True
 from collections import OrderedDict
 from lark.visitors import _vargs_meta, _vargs_meta_inline
 from lark.visitors import Transformer_InPlace
@@ -9,6 +9,7 @@ from lark.parsers.lalr_interactive_parser import (
 from lark.parsers.lalr_analysis import LALR_Analyzer, Shift, IntParseTable
 from lark.utils import Serialize
 import cython
+from threading import RLock
 
 from copy import copy, deepcopy
 from typing import Any, Iterator, Optional, Collection, Dict
@@ -243,6 +244,7 @@ cdef class BasicLexer(Lexer):
     cdef int use_bytes
     cdef dict terminals_by_name
     cdef Scanner _scanner
+    cdef object _scanner_lock
 
     def __init__(self, conf: "LexerConf") -> None:
         terminals = list(conf.terminals)
@@ -281,9 +283,10 @@ cdef class BasicLexer(Lexer):
         self.use_bytes = conf.use_bytes
         self.terminals_by_name = conf.terminals_by_name
 
+        self._scanner_lock = RLock()
         self._scanner = None
 
-    def _build_scanner(self):
+    cdef _build_scanner(self):
         terminals, self.callback = _create_unless(
             self.terminals, self.g_regex_flags, self.re, self.use_bytes)
         assert all(self.callback.values())
@@ -301,9 +304,12 @@ cdef class BasicLexer(Lexer):
 
     @property
     def scanner(self):
-        if self._scanner is None:
-            self._build_scanner()
-        return self._scanner
+        # Publish the scanner and its complete callback table together.
+        # Wait for initialization to finish before using the scanner.
+        with self._scanner_lock:
+            if self._scanner is None:
+                self._build_scanner()
+            return self._scanner
 
     cdef match(self, text, pos):
         return self.scanner.match(text, pos)
