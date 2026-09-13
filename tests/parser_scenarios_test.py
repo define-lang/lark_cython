@@ -20,6 +20,16 @@ if TYPE_CHECKING:
     from lark_cython.lark_cython import InteractiveParser
 
 
+def _make_lalr(
+    grammar: str,
+    transformer: object,
+    implementation: Literal["python", "native"],
+) -> Lark:
+    if implementation == "native":
+        return Lark(grammar, parser="lalr", transformer=transformer, _plugins=plugins)
+    return Lark(grammar, parser="lalr", transformer=transformer)
+
+
 def test_parser_state_rejects_a_bare_token_value():
     parser = Lark("start: WORD\n%import common.WORD", parser="lalr", _plugins=plugins)
     cursor = cast("InteractiveParser", parser.parse_interactive(""))
@@ -62,6 +72,81 @@ def test_interactive_exhaust_and_eof(lexer: Literal["basic", "contextual"]):
     assert [str(token) for token in tokens] == ["a", "b"]
     assert cursor.accepts() == {"$END"}
     assert cursor.feed_eof(tokens[-1]) == Tree("start", [])
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
+def test_interactive_accepts_does_not_run_reduction_callbacks(
+    implementation: Literal["python", "native"],
+):
+    calls: list[str] = []
+
+    class RecordItems(Transformer[Token, str]):
+        def item(self, _children: list[Token]) -> str:
+            calls.append("item")
+            return "transformed"
+
+    parser = _make_lalr(
+        'start: item "b"\nitem: "a"',
+        RecordItems(),
+        implementation,
+    )
+    cursor = cast("InteractiveParser", parser.parse_interactive("ab"))
+    first = next(cursor.iter_parse())
+    cursor.feed_token(first)
+
+    assert cursor.accepts() == {"B"}
+    assert calls == []
+    assert cursor.resume_parse() == Tree("start", ["transformed"])
+    assert calls == ["item"]
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
+def test_interactive_copies_apply_transformer_independently(
+    implementation: Literal["python", "native"],
+):
+    calls: list[str] = []
+
+    class UppercaseItems(Transformer[Token, str]):
+        def item(self, children: list[Token]) -> str:
+            value = children[0].value.upper()
+            calls.append(value)
+            return value
+
+    parser = _make_lalr(
+        'start: item item\nitem: WORD\n%import common.WORD\n%ignore " "',
+        UppercaseItems(),
+        implementation,
+    )
+    cursor = cast("InteractiveParser", parser.parse_interactive(""))
+    cursor.feed_token(Token("WORD", "one"))
+    duplicate = cursor.copy()
+
+    for current in (cursor, duplicate):
+        current.feed_token(Token("WORD", "two"))
+    assert cursor.feed_eof() == Tree("start", ["ONE", "TWO"])
+    assert duplicate.feed_eof() == Tree("start", ["ONE", "TWO"])
+    assert calls == ["ONE", "ONE", "TWO", "TWO"]
+
+
+@pytest.mark.parametrize("implementation", ["python", "native"])
+def test_recovery_cursor_applies_transformer_after_a_fed_token(
+    implementation: Literal["python", "native"],
+):
+    class UppercaseItem(Transformer[Token, str]):
+        def item(self, children: list[Token]) -> str:
+            return children[0].value.upper()
+
+    parser = _make_lalr(
+        'start: "(" item ")"\nitem: WORD\n%import common.WORD',
+        UppercaseItem(),
+        implementation,
+    )
+    with pytest.raises(UnexpectedToken) as error:
+        parser.parse("(hello(")
+    recovery = cast("InteractiveParser", error.value.interactive_parser)
+
+    recovery.feed_token(Token("RPAR", ")"))
+    assert recovery.feed_eof() == Tree("start", ["HELLO"])
 
 
 @pytest.mark.parametrize("lexer", ["basic", "contextual"])

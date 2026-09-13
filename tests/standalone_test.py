@@ -142,6 +142,28 @@ def test_generated_interactive_copies_resume_independently(generated: ModuleType
     assert duplicate.resume_parse() == cursor.resume_parse()
 
 
+def test_generated_interactive_accepts_does_not_run_reduction_callbacks():
+    module = generate('start: item "b"\nitem: "a"')
+    calls: list[str] = []
+
+    class RecordItems(module.Transformer):
+        def item(self, _children: list[object]) -> str:
+            calls.append("item")
+            return "transformed"
+
+    parser = module.Lark_StandAlone(
+        _plugins=standalone_plugins(module), transformer=RecordItems()
+    )
+    cursor = parser.parse_interactive("ab")
+    first = next(cursor.iter_parse())
+    cursor.feed_token(first)
+
+    assert cursor.accepts() == {"B"}
+    assert calls == []
+    assert cursor.resume_parse() == module.Tree("start", ["transformed"])
+    assert calls == ["item"]
+
+
 def test_empty_generated_grammar():
     module = generate("start:")
     parser = module.Lark_StandAlone(_plugins=standalone_plugins(module))
