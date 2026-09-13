@@ -12,8 +12,15 @@ def test_nested_capture_groups(lexer):
     parser = Lark('start: WORD NUMBER\nWORD: /a(b(c)?)/\nNUMBER: /[0-9]+/',
                   parser="lalr", lexer=lexer, _plugins=plugins)
     tokens = parser.parse("abc12").children
-    assert [(t.type, t.value, t.start_pos, t.end_pos) for t in tokens] == [
-        ("WORD", "abc", 0, 3), ("NUMBER", "12", 3, 5)]
+    word, number = tokens
+    assert word.type == "WORD"
+    assert word.value == "abc"
+    assert word.start_pos == 0
+    assert word.end_pos == 3
+    assert number.type == "NUMBER"
+    assert number.value == "12"
+    assert number.start_pos == 3
+    assert number.end_pos == 5
 
 
 def test_scanner_match_and_miss():
