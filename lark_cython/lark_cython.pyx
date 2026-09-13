@@ -1,5 +1,6 @@
 #cython: language_level=3
 import cython
+from cpython.list cimport PyList_SetSlice
 
 from copy import copy
 from typing import Any, Iterator, Type, Optional, Collection, Dict
@@ -405,22 +406,54 @@ from lark.parsers.lalr_interactive_parser import InteractiveParser
 from lark.exceptions import UnexpectedCharacters, UnexpectedInput, UnexpectedToken
 
 
+cdef class _Reduction:
+    cdef int size
+    cdef object name, rule
+
+    def __init__(self, rule):
+        self.size = len(rule.expansion)
+        self.name = rule.origin.name
+        self.rule = rule
+
+
+cdef class _CompiledGrammar:
+    cdef object parse_table
+    cdef dict callbacks
+    cdef list states
+
+    def __init__(self, parse_table, callbacks):
+        self.parse_table = parse_table
+        self.callbacks = callbacks
+        reductions = {}
+        self.states = [None] * len(parse_table.states)
+        for state, actions in parse_table.states.items():
+            compiled = {}
+            for name, (action, arg) in actions.items():
+                if action is not Shift:
+                    if arg not in reductions:
+                        reductions[arg] = _Reduction(arg)
+                    arg = reductions[arg]
+                compiled[name] = arg
+            self.states[state] = compiled
+
+
 cdef class ParseConf:
     __slots__ = 'parse_table', 'callbacks', 'start', 'start_state', 'end_state', 'states'
 
     cdef public parse_table
     cdef public int start_state, end_state
-    cdef dict states, callbacks
+    cdef list states
+    cdef public dict callbacks
     cdef str start
 
-    def __init__(self, parse_table, callbacks, start):
-        self.parse_table = parse_table
+    def __init__(self, _CompiledGrammar grammar, start):
+        self.parse_table = grammar.parse_table
 
         self.start_state = self.parse_table.start_states[start]
         self.end_state = self.parse_table.end_states[start]
-        self.states = self.parse_table.states
+        self.states = grammar.states
 
-        self.callbacks = callbacks
+        self.callbacks = grammar.callbacks
         self.start = start
 
 
@@ -462,51 +495,56 @@ cdef class ParserState:
         cdef:
             list state_stack = self.state_stack
             list value_stack = self.value_stack
-            dict states = self.parse_conf.states
+            list states = self.parse_conf.states
+            dict row
             int end_state = self.parse_conf.end_state
             dict callbacks = self.parse_conf.callbacks
 
-            int state, new_state
-            object action, _action
+            int state
+            object new_state
             object arg
             int size
             list s
             object value
-            object rule
+            _Reduction reduction
 
 
         while True:
             state = state_stack[-1]
+            row = states[state]
             try:
-                action, arg = states[state][token.type]
+                arg = row[token.type]
             except KeyError:
                 # expected = {s for s in states[state].keys() if s.isupper()}
                 expected = set(filter(str.isupper, states[state].keys()))
                 raise UnexpectedToken(token, expected, state=self, interactive_parser=None)
 
-            assert arg != end_state
-
-            if action is Shift:
+            if not isinstance(arg, _Reduction):
                 # shift once and return
                 assert not is_end
+                assert arg != end_state
                 state_stack.append(arg)
                 value_stack.append(token if token.type not in callbacks else callbacks[token.type](token))
                 return
             else:
                 # reduce+shift as many times as necessary
-                rule = arg
-                size = len(rule.expansion)
+                reduction = arg
+                size = reduction.size
                 if size:
                     s = value_stack[-size:]
-                    del state_stack[-size:]
-                    del value_stack[-size:]
+                    PyList_SetSlice(state_stack, len(state_stack) - size,
+                                    len(state_stack), cython.cast(object, NULL))
+                    PyList_SetSlice(value_stack, len(value_stack) - size,
+                                    len(value_stack), cython.cast(object, NULL))
                 else:
                     s = []
 
-                value = callbacks[rule](s)
+                # InteractiveParser.accepts() disables callbacks on a copied conf.
+                value = callbacks[reduction.rule](s) if callbacks else s
 
-                _action, new_state = states[state_stack[-1]][rule.origin.name]
-                assert _action is Shift
+                state = state_stack[-1]
+                row = states[state]
+                new_state = row[reduction.name]
                 state_stack.append(new_state)
                 value_stack.append(value)
 
@@ -514,17 +552,15 @@ cdef class ParserState:
                     return value_stack[-1]
 
 cdef class _Parser:
-    cdef parse_table
-    cdef dict callbacks
+    cdef _CompiledGrammar _grammar
     cdef bint debug
 
     def __cinit__(self, parse_table, callbacks, debug=False):
-        self.parse_table = parse_table
-        self.callbacks = callbacks
+        self._grammar = _CompiledGrammar(parse_table, callbacks)
         self.debug = debug
 
     def parse(self, lexer, start, value_stack=None, state_stack=None, start_interactive=False):
-        parse_conf = ParseConf(self.parse_table, self.callbacks, start)
+        parse_conf = ParseConf(self._grammar, start)
         parser_state = ParserState(parse_conf, lexer, state_stack, value_stack)
         if start_interactive:
             return InteractiveParser(self, parser_state, parser_state.lexer)
@@ -572,9 +608,10 @@ class LALR_Parser(Serialize):
         analysis.compute_lalr()
         callbacks = parser_conf.callbacks
 
-        self._parse_table = analysis.parse_table
+        self._parse_table = (IntParseTable.from_ParseTable(analysis.parse_table)
+                            if debug else analysis.parse_table)
         self.parser_conf = parser_conf
-        self.parser = _Parser(analysis.parse_table, callbacks, debug)
+        self.parser = _Parser(self._parse_table, callbacks, debug)
 
     @classmethod
     def deserialize(cls, data, memo, callbacks, debug=False):

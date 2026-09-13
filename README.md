@@ -28,6 +28,8 @@ See the [examples](https://github.com/lark-parser/lark_cython/tree/master/exampl
 ## Other caveats
 
 - Postlexer isn't currently implemented
+- Grammar tables are compiled at parser construction; construct a new parser
+  when changing the grammar. Callback dictionaries remain live.
 
 ## Speed
 
