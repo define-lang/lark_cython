@@ -11,15 +11,13 @@ uv add lark-cython
 Usage:
 
 ```python
+from lark import Lark
 import lark_cython
 
 parser = Lark(grammar, parser="lalr", _plugins=lark_cython.plugins)
-
-# Use Lark as you usually would, with a huge performance boost
 ```
 
-See the [examples](https://github.com/lark-parser/lark_cython/tree/master/examples) for more.
-
+See the [examples](examples/) for complete JSON and calculator parsers.
 
 ## Differences from Lark
 
@@ -27,13 +25,13 @@ See the [examples](https://github.com/lark-parser/lark_cython/tree/master/exampl
 
 ## Other caveats
 
-- Postlexer isn't currently implemented
+- Postlexer isn't currently implemented.
+- The extension requires the GIL, including on free-threaded Python.
 
 ## Speed
 
-In current benchmarks, lark-cython is about 50% to 80% faster than Lark.
-
-We're still in the early stages, and in the future, lark-cython might go a lot faster.
+Performance depends on the grammar and input. See the [benchmark guide](benchmarks/README.md)
+for comparisons with standard Lark and instructions for measuring your changes.
 
 ## Development
 
@@ -48,29 +46,16 @@ uv run pre-commit run --all-files
 uv run pytest
 ```
 
-Ruff lints and formats Python files with a Python 3.10 target. Tests use the
-`*_test.py` naming convention and the test-specific lint rules in `pyproject.toml`.
+Ruff lints and formats Python files. For `.pyx` files, pre-commit runs autopep8
+whitespace formatting, string quote normalization, and `cython-lint`. Long Cython
+declarations may need manual wrapping. Name test files `*_test.py`.
 
-Ruff and Black cannot parse this project's Cython syntax. For `.pyx` files,
-pre-commit runs autopep8's conservative whitespace fixes, Cython string quote
-normalization, and `cython-lint`. Autopep8 is not a complete Cython formatter;
-long declarations may still need manual wrapping. It never formats Python files
-in this configuration.
-
-CI runs these hooks and builds and tests the source distribution on Python
-3.10–3.14 on Linux. Cross-platform wheel builds are manual.
-
-### Performance measurements
-
-See [the benchmark guide](benchmarks/README.md) for repeatable comparisons with
-standard Lark and instructions for inspecting annotated Cython output.
+CI tests Python 3.10–3.14 on Linux and runs the pre-commit hooks. Cross-platform
+wheel builds can be triggered manually in GitHub Actions.
 
 ### Cython coverage
 
-Normal builds omit line-tracing instrumentation. Use a separate Python 3.11
-environment to measure the extension with `Cython.Coverage`; Python 3.12 does
-not support Cython tracing. The normal test matrix still covers all supported
-Python versions.
+Use a separate Python 3.11 environment to measure Cython line coverage:
 
 ```sh
 uv python install 3.11
@@ -80,28 +65,16 @@ UV_PROJECT_ENVIRONMENT=.venv-coverage LARK_CYTHON_COVERAGE=1 \
   uv run --locked pytest --cov --cov-report=term-missing --cov-report=html --cov-report=xml
 ```
 
-Open `htmlcov/index.html` for line-by-line results. CI uploads HTML and XML
-reports as the `cython-coverage` artifact and verifies that `.pyx` coverage was
-actually recorded, with a minimum of 98% Cython line coverage. The scenario and
-standard-Lark comparison suites cover parsing, diagnostics, interactive parsing,
-recovery, serialization, tokens, native trees, and both example CLIs without
-mocks. Examples and Python package code have 100% line coverage.
+Open `htmlcov/index.html` to see uncovered lines. CI also provides HTML and XML
+reports in the `cython-coverage` artifact and requires at least 98% Cython line
+coverage.
 
-Cython currently reports ten recovery-path lines as missing even though the
-recovery tests exercise them (including repeated errors and EOF loop prevention).
-These lines remain in the report; no coverage exclusions hide them. This is line
-coverage, not branch coverage, and does not prove every input behaves identically.
-
-Instrumentation affects performance. Rebuild without `LARK_CYTHON_COVERAGE`
-before benchmarking. The uv cache keys track Cython source changes and the
-coverage flag so normal development commands rebuild when either changes:
+Coverage instrumentation affects performance. Before benchmarking, rebuild in
+your normal environment with `LARK_CYTHON_COVERAGE` unset:
 
 ```sh
 uv sync --locked --reinstall-package lark-cython
 ```
-
-Compatibility with Lark's standalone parser generator remains unverified.
-The current extension enables the GIL on free-threaded Python.
 
 ## Other
 
