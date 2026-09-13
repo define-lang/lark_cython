@@ -309,7 +309,6 @@ cdef class BasicLexer(Lexer):
     cdef _build_scanner(self):
         terminals, self.callback = self._runtime.create_unless(
             self.terminals, self.g_regex_flags, self.re, self.use_bytes)
-        assert all(self.callback.values())
 
         for type_, f in self.user_callbacks.items():
             if type_ in self.callback:
@@ -512,8 +511,8 @@ cdef class ParseConf:
     cdef public int start_state, end_state
     cdef public dict callbacks
 
-    def __init__(self, parse_table, callbacks, start, runtime=None):
-        self._runtime = _DEFAULT_RUNTIME if runtime is None else runtime
+    def __init__(self, parse_table, callbacks, start, runtime):
+        self._runtime = runtime
         self.parse_table = parse_table
         self.start_state = parse_table.start_states[start]
         self.end_state = parse_table.end_states[start]
