@@ -29,6 +29,10 @@ See the [examples](https://github.com/lark-parser/lark_cython/tree/master/exampl
 
 - Postlexer isn't currently implemented
 
+Parsers can be shared across threads, including on free-threaded Python. Keep
+each parsing session in one thread, synchronize mutable state in user callbacks,
+and do not modify parser configuration or tokens while another thread uses them.
+
 ## Speed
 
 In current benchmarks, lark-cython is about 50% to 80% faster than Lark.

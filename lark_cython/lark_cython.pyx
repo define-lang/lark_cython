@@ -1,5 +1,6 @@
-#cython: language_level=3
+#cython: language_level=3, freethreading_compatible=True
 import cython
+from threading import RLock
 
 from copy import copy
 from typing import Any, Iterator, Type, Optional, Collection, Dict
@@ -78,11 +79,13 @@ cdef class LexerState:
     cdef public str text
     cdef public LineCounter line_ctr
     cdef public object last_token
+    cdef dict _scanner_cache
 
     def __init__(self, text, line_ctr, last_token=None):
         self.text = text
         self.line_ctr = line_ctr
         self.last_token = last_token
+        self._scanner_cache = {}
 
     def __eq__(self, other):
         if not isinstance(other, LexerState):
@@ -90,8 +93,10 @@ cdef class LexerState:
 
         return self.text is other.text and self.line_ctr == other.line_ctr and self.last_token == other.last_token
 
-    cdef __copy__(self):
-        return type(self)(self.text, copy(self.line_ctr), self.last_token)
+    def __copy__(self):
+        cdef LexerState result = type(self)(self.text, copy(self.line_ctr), self.last_token)
+        result._scanner_cache.update(self._scanner_cache)
+        return result
 
     _Token = Token
 
@@ -116,6 +121,14 @@ cdef class LineCounter:
             return NotImplemented
 
         return self.char_pos == other.char_pos and self.newline_char == other.newline_char
+
+    def __copy__(self):
+        result = LineCounter(self.newline_char)
+        result.char_pos = self.char_pos
+        result.line = self.line
+        result.column = self.column
+        result.line_start_pos = self.line_start_pos
+        return result
 
     cpdef public feed(self, str token, bint test_newline):
         """Consume a token and calculate the new line & column.
@@ -209,6 +222,8 @@ cdef class BasicLexer(Lexer):
     cdef int use_bytes
     cdef dict terminals_by_name
     cdef Scanner _scanner
+    cdef object _scanner_lock
+    cdef object _scanner_cache_key
 
     def __init__(self, conf: 'LexerConf') -> None:
         terminals = list(conf.terminals)
@@ -241,16 +256,18 @@ cdef class BasicLexer(Lexer):
         self.use_bytes = conf.use_bytes
         self.terminals_by_name = conf.terminals_by_name
 
+        self._scanner_lock = RLock()
+        self._scanner_cache_key = object()
         self._scanner = None
 
-    def _build_scanner(self):
+    cdef _build_scanner(self):
         terminals, self.callback = _create_unless(self.terminals, self.g_regex_flags, self.re, self.use_bytes)
         assert all(self.callback.values())
 
         for type_, f in self.user_callbacks.items():
             if type_ in self.callback:
                 # Already a callback there, probably UnlessCallback
-                self.callback[type_] = CallChain(self.callback[type_], f, lambda t: t.type == type_)
+                self.callback[type_] = CallChain(self.callback[type_], f, lambda t, type_=type_: t.type == type_)
             else:
                 self.callback[type_] = f
 
@@ -258,12 +275,17 @@ cdef class BasicLexer(Lexer):
 
     @property
     def scanner(self):
-        if self._scanner is None:
-            self._build_scanner()
-        return self._scanner
+        with self._scanner_lock:
+            if self._scanner is None:
+                self._build_scanner()
+            return self._scanner
 
-    cdef match(self, text, pos):
-        return self.scanner.match(text, pos)
+    cdef Scanner _scanner_for_state(self, LexerState state):
+        cdef Scanner scanner = state._scanner_cache.get(self._scanner_cache_key)
+        if scanner is None:
+            scanner = self.scanner
+            state._scanner_cache[self._scanner_cache_key] = scanner
+        return scanner
 
     # def lex(self, state: LexerState, parser_state: Any):
     #    with suppress(EOFError):
@@ -276,11 +298,16 @@ cdef class BasicLexer(Lexer):
         cdef str type_
         cdef Token t
         cdef Token t2
+        cdef Scanner scanner
+
+        if line_ctr.char_pos >= len(lex_state.text):
+            raise EOFError(self)
+        scanner = self._scanner_for_state(lex_state)
 
         while line_ctr.char_pos < len(lex_state.text):
-            res = self.match(lex_state.text, line_ctr.char_pos)
+            res = scanner.match(lex_state.text, line_ctr.char_pos)
             if not res:
-                allowed = self.scanner.allowed_types - self.ignore_types
+                allowed = scanner.allowed_types - self.ignore_types
                 if not allowed:
                     allowed = {"<END-OF-FILE>"}
                 raise UnexpectedCharacters(lex_state.text, line_ctr.char_pos, line_ctr.line, line_ctr.column,
