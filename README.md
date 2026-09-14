@@ -21,6 +21,23 @@ parser = Lark(grammar, parser="lalr", _plugins=lark_cython.plugins)
 See the [examples](https://github.com/lark-parser/lark_cython/tree/master/examples) for more.
 
 
+## Generated standalone parsers
+
+Pass plugins bound to your generated module:
+
+```python
+import generated_parser
+from lark_cython import standalone_plugins
+
+parser = generated_parser.Lark_StandAlone(
+    _plugins=standalone_plugins(generated_parser),
+)
+```
+
+This uses native tokens and the generated module's trees and exceptions.
+Use `token.value` for string operations. The installed Lark package is still
+required; the generated parser file does not need changes.
+
 ## Differences from Lark
 
 - `Token` instances do not inherit from `str`. You must use the `value` attribute to get the string.
