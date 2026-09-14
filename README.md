@@ -27,7 +27,7 @@ Pass plugins bound to your generated module:
 
 ```python
 import generated_parser
-from lark_cython import standalone_plugins
+from lark_cython.standalone import standalone_plugins
 
 parser = generated_parser.Lark_StandAlone(
     _plugins=standalone_plugins(generated_parser),

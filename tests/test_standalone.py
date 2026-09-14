@@ -6,7 +6,8 @@ from uuid import uuid4
 import pytest
 from lark import Lark
 from lark.tools.standalone import gen_standalone
-from lark_cython import Token, standalone_plugins
+from lark_cython import Token
+from lark_cython.standalone import standalone_plugins
 
 
 def generate(grammar, lexer="contextual"):
