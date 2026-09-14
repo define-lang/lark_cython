@@ -300,6 +300,7 @@ cdef class BasicLexer(Lexer):
         cdef Token t2
         cdef Scanner scanner
 
+        # At EOF, avoid looking up or initializing a scanner we won't use.
         if line_ctr.char_pos >= len(lex_state.text):
             raise EOFError(self)
         scanner = self._scanner_for_state(lex_state)
